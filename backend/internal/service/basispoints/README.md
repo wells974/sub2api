@@ -22,6 +22,13 @@ the final response locally. This does not provide upstream constrained decoding.
 
 # Tool history and input boundaries
 
+- Fold durable `configuration_update` items into the outgoing request's
+  `reasoning_effort` in history order; the last update overrides the top-level
+  effort. Apply the existing BPS effort mapping (for example, `max` and `ultra`
+  become `xhigh`) and omit the control items from upstream history. Message and
+  tool history are preserved. Malformed or unsupported updates return an error
+  with the original input path. This applies to the next upstream request and
+  does not change the effort of an already running response.
 - OAuth models routed through BPS do not advertise native encrypted multi-agent
   capabilities. Apply this limit to generated, fetched and pinned group catalogs
   by the actual mapped route, and recalculate the client ETag. Plaintext client

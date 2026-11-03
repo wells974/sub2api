@@ -114,6 +114,29 @@ func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, 
 			return nil, nil, fmt.Errorf("basispoints does not support reasoning mode %q", mode)
 		}
 	}
+	// Configuration updates are durable history controls. BPS only accepts a
+	// request-wide effort, so apply them in order before translating the history.
+	// Keep the original input intact here for diagnostics and conversation IDs.
+	if items, ok := source["input"].([]any); ok {
+		for index, raw := range items {
+			item, _ := raw.(object)
+			if text(item["type"]) != "configuration_update" {
+				continue
+			}
+			reasoning, _ := item["reasoning"].(object)
+			update, ok := reasoning["effort"].(string)
+			if !ok || strings.TrimSpace(update) == "" {
+				return nil, nil, fmt.Errorf("basispoints configuration_update requires a non-empty reasoning effort (path=input[%d].reasoning.effort)", index)
+			}
+			if mode := text(reasoning["mode"]); mode != "" && mode != "standard" {
+				return nil, nil, fmt.Errorf("basispoints configuration_update does not support this reasoning mode (path=input[%d].reasoning.mode)", index)
+			}
+			if _, err := NormalizeEffort(update); err != nil {
+				return nil, nil, fmt.Errorf("basispoints configuration_update reasoning effort is unsupported (path=input[%d].reasoning.effort)", index)
+			}
+			requested = update
+		}
+	}
 	effort, err := NormalizeEffort(requested)
 	if err != nil {
 		return nil, nil, err
