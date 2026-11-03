@@ -31,6 +31,7 @@ type updateServiceGitHubClientStub struct {
 	release        *GitHubRelease
 	recentReleases []*GitHubRelease
 	recentErr      error
+	recentRepo     string
 	latestRepo     string
 }
 
@@ -39,7 +40,8 @@ func (s *updateServiceGitHubClientStub) FetchLatestRelease(_ context.Context, re
 	return s.release, nil
 }
 
-func (s *updateServiceGitHubClientStub) FetchRecentReleases(context.Context, string, int) ([]*GitHubRelease, error) {
+func (s *updateServiceGitHubClientStub) FetchRecentReleases(_ context.Context, repo string, _ int) ([]*GitHubRelease, error) {
+	s.recentRepo = repo
 	return s.recentReleases, s.recentErr
 }
 
@@ -52,6 +54,7 @@ func (s *updateServiceGitHubClientStub) FetchChecksumFile(context.Context, strin
 }
 
 func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
+	t.Setenv("UPDATE_GITHUB_REPO", "")
 	githubClient := &updateServiceGitHubClientStub{
 		release: &GitHubRelease{
 			TagName: "v0.1.132",
@@ -70,7 +73,7 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrNoUpdateAvailable))
 	require.ErrorIs(t, err, ErrNoUpdateAvailable)
-	require.Equal(t, "ranxi2001/sub2api", githubClient.latestRepo)
+	require.Equal(t, "wells974/sub2api", githubClient.latestRepo)
 }
 
 func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateService {

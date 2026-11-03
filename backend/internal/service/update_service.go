@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -35,7 +36,7 @@ const (
 	// Releases are maintained on the owner-controlled production fork. Keep the
 	// updater independent from the upstream repository so production installs
 	// see our release stream and can update to our fork's assets.
-	githubRepo = "ranxi2001/sub2api"
+	defaultGitHubRepo = "wells974/sub2api"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
@@ -49,6 +50,8 @@ const (
 	// Fetch a few extra releases so filtering (current/newer/prerelease) still leaves enough candidates
 	rollbackFetchPageSize = 15
 )
+
+var updateRepoPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$`)
 
 // UpdateCache defines cache operations for update service
 type UpdateCache interface {
@@ -68,6 +71,8 @@ type GitHubReleaseClient interface {
 type UpdateService struct {
 	cache           UpdateCache
 	githubClient    GitHubReleaseClient
+	githubRepo      string
+	githubRepoError error
 	currentVersion  string
 	buildType       string // "source" for manual builds, "release" for CI builds
 	installMu       sync.Mutex
@@ -76,11 +81,21 @@ type UpdateService struct {
 
 // NewUpdateService creates a new UpdateService
 func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, version, buildType string) *UpdateService {
+	repo := strings.TrimSpace(os.Getenv("UPDATE_GITHUB_REPO"))
+	if repo == "" {
+		repo = defaultGitHubRepo
+	}
+	var repoError error
+	if !updateRepoPattern.MatchString(repo) || strings.HasSuffix(repo, "/.") || strings.HasSuffix(repo, "/..") {
+		repoError = fmt.Errorf("UPDATE_GITHUB_REPO must be a GitHub owner/repository, without a URL or additional path")
+	}
 	return &UpdateService{
-		cache:          cache,
-		githubClient:   githubClient,
-		currentVersion: version,
-		buildType:      buildType,
+		cache:           cache,
+		githubClient:    githubClient,
+		githubRepo:      repo,
+		githubRepoError: repoError,
+		currentVersion:  version,
+		buildType:       buildType,
 	}
 }
 
@@ -404,7 +419,10 @@ func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) e
 // fetchRollbackCandidates fetches recent releases and keeps the newest
 // maxRollbackVersions entries strictly older than the current version.
 func (s *UpdateService) fetchRollbackCandidates(ctx context.Context) ([]*GitHubRelease, error) {
-	releases, err := s.githubClient.FetchRecentReleases(ctx, githubRepo, rollbackFetchPageSize)
+	if s.githubRepoError != nil {
+		return nil, s.githubRepoError
+	}
+	releases, err := s.githubClient.FetchRecentReleases(ctx, s.githubRepo, rollbackFetchPageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +459,10 @@ func (s *UpdateService) fetchRollbackCandidates(ctx context.Context) ([]*GitHubR
 }
 
 func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, error) {
-	release, err := s.githubClient.FetchLatestRelease(ctx, githubRepo)
+	if s.githubRepoError != nil {
+		return nil, s.githubRepoError
+	}
+	release, err := s.githubClient.FetchLatestRelease(ctx, s.githubRepo)
 	if err != nil {
 		return nil, err
 	}
@@ -635,18 +656,26 @@ func (s *UpdateService) extractBinary(archivePath, destPath string) error {
 }
 
 func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {
+	if s.githubRepoError != nil {
+		return nil, s.githubRepoError
+	}
 	data, err := s.cache.GetUpdateInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	var cached struct {
+		Repository  string       `json:"repository"`
 		Latest      string       `json:"latest"`
 		ReleaseInfo *ReleaseInfo `json:"release_info"`
 		Timestamp   int64        `json:"timestamp"`
 	}
 	if err := json.Unmarshal([]byte(data), &cached); err != nil {
 		return nil, err
+	}
+	// Ignore legacy and other-fork cache entries, including during API outages.
+	if !strings.EqualFold(cached.Repository, s.githubRepo) {
+		return nil, fmt.Errorf("update cache belongs to a different repository")
 	}
 
 	if time.Now().Unix()-cached.Timestamp > updateCacheTTL {
@@ -665,10 +694,12 @@ func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {
 
 func (s *UpdateService) saveToCache(ctx context.Context, info *UpdateInfo) {
 	cacheData := struct {
+		Repository  string       `json:"repository"`
 		Latest      string       `json:"latest"`
 		ReleaseInfo *ReleaseInfo `json:"release_info"`
 		Timestamp   int64        `json:"timestamp"`
 	}{
+		Repository:  s.githubRepo,
 		Latest:      info.LatestVersion,
 		ReleaseInfo: info.ReleaseInfo,
 		Timestamp:   time.Now().Unix(),

@@ -4,6 +4,8 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 
 网页注册额度、登录失败封禁及可信代理升级要求见 [网页认证 IP 防护](AUTH_IP_GUARD.md)。
 
+使用自己的 GitHub Releases 保留页面「立即更新」流程，见 [二开版本的页面更新](../docs/custom-release-updates.md)。
+
 ## Deployment Methods
 
 | Method | Best For | Setup Wizard |
@@ -19,6 +21,7 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 |------|-------------|
 | `docker-compose.yml` | Docker Compose configuration (named volumes) |
 | `docker-compose.local.yml` | Docker Compose configuration (local directories, easy migration) |
+| `docker-compose.fork.yml` | 本 fork 的更新仓库和程序持久化覆盖配置，与 local 配置组合使用 |
 | `docker-deploy.sh` | **One-click Docker deployment script (recommended)** |
 | `apple-container.sh` | Native Apple `container` lifecycle script |
 | `APPLE_CONTAINER.md` | Apple `container` deployment and operations guide |

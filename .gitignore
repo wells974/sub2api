@@ -142,6 +142,7 @@ docs/*
 !docs/security-penalties.md
 !docs/ip-risk-control.md
 !docs/docker-trusted-proxies.md
+!docs/custom-release-updates.md
 !docs/anonymous-api-guard.md
 !docs/registration-email-alias-block.md
 !docs/openai-ws-sse-acceleration.md

@@ -1,0 +1,12 @@
+# Overlay for this fork: combine with docker-compose.local.yml.
+# First install: docker compose -f docker-compose.local.yml -f docker-compose.fork.yml up -d --build --no-deps sub2api
+# Later web updates use wells974/sub2api Releases and survive container recreation.
+services:
+  sub2api:
+    image: ghcr.io/wells974/sub2api:${SUB2API_IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      - UPDATE_GITHUB_REPO=${UPDATE_GITHUB_REPO:-wells974/sub2api}
+      - SUB2API_PERSIST_UPDATES=true

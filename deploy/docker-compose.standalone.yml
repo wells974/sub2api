@@ -47,6 +47,8 @@ services:
       - SIMPLE_MODE_AUTO_CREATE_DEFAULT_GROUPS=${SIMPLE_MODE_AUTO_CREATE_DEFAULT_GROUPS:-}
       - SIMPLE_MODE_KEY_RATE_LIMIT_ENABLED=${SIMPLE_MODE_KEY_RATE_LIMIT_ENABLED:-false}
       - UPDATE_GITHUB_TOKEN=${UPDATE_GITHUB_TOKEN:-}
+      - UPDATE_GITHUB_REPO=${UPDATE_GITHUB_REPO:-}
+      - SUB2API_PERSIST_UPDATES=${SUB2API_PERSIST_UPDATES:-false}
 
       # =======================================================================
       # Database Configuration (PostgreSQL) - Required
