@@ -103,6 +103,7 @@ export interface User {
 }
 
 export interface AdminUser extends User {
+  auto_credit_outstanding?: string
   // 管理员备注（普通用户接口不返回）
   notes: string
   last_used_at?: string | null
@@ -798,6 +799,9 @@ export interface ApiKey {
   reset_1d_at: string | null
   reset_7d_at: string | null
   group_ids?: number[]
+  model_mapping?: Record<string, string>
+  reasoning_effort?: string
+  allow_long_context?: boolean
 }
 
 export interface ApiKeyConcurrencySnapshot {
@@ -2028,6 +2032,7 @@ export interface UsageLog {
     forward_first_token_ms: number | null; forward_duration_ms: number
   } | null
   content_timing?: {
+    sse_event_first_ms?: number | null; semantic_first_ms?: number | null
     reasoning_first_ms: number | null; visible_text_first_ms: number | null; response_byte_first_ms: number | null
     status: string; source: string; scope: string; reasoning_streaming_capability: string; capability_source: string
   }

@@ -13,8 +13,18 @@ export interface PerformanceConfig {
  tps: PerformanceBounds
  degradation: PerformanceBounds
  ttft: PerformanceBounds
+ upstream_error: PerformanceBounds
+}
+export interface UpstreamHTTPErrorEvidence {
+ percent: number | null
+ failures: number
+ total: number
+ source: 'process_local_http_responses'
+ observed_since: string
+ window_complete: boolean
 }
 export interface AccountPerformance {
+ upstream_error?: UpstreamHTTPErrorEvidence
  account_id: number
  avg_tps: number | null
  degradation_percent: number | null
@@ -41,5 +51,5 @@ export interface PerformanceEvent {
  evidence: unknown
 }
 export const emptyPerformanceConfig = (): PerformanceConfig => ({
- enabled: false, tps: {min:null,max:null}, degradation: {min:null,max:null}, ttft: {min:null,max:null}
+ enabled: false, tps: {min:null,max:null}, degradation: {min:null,max:null}, ttft: {min:null,max:null}, upstream_error: {min:null,max:null}
 })
