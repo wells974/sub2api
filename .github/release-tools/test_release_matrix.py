@@ -137,6 +137,39 @@ class ReleaseMatrixTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'does not match'):
                 release.plan(args)
 
+    def test_plan_accepts_fork_and_local_revision_tags(self):
+        for version in ('2.19.9', '2.19.9.1', '2.19.9-rc.1', '2.19.9.1-rc.1'):
+            for dry_run in (False, True):
+                with self.subTest(version=version, dry_run=dry_run):
+                    release.VERSION_FILE.write_text(version + '\n' if dry_run else '0.0.0\n')
+                    Path('outputs').write_text('')
+                    with patch.dict(os.environ, {'GITHUB_OUTPUT': 'outputs'}), patch.object(subprocess, 'check_output', return_value='a' * 40 + '\n'):
+                        release.plan(argparse.Namespace(ref='v' + version, dry_run=dry_run, simple=False))
+                    output = dict(line.split('=', 1) for line in Path('outputs').read_text().splitlines())
+                    self.assertEqual(output['tag'], 'v' + version)
+                    self.assertEqual(output['version'], version)
+                    self.assertEqual(output['prerelease'], str('-' in version).lower())
+                    self.assertEqual(release.VERSION_FILE.read_text(), version + '\n')
+
+    def test_plan_rejects_malformed_version_tags(self):
+        for tag in ('v2.19', 'v2.19.9.1.2', 'v2.19.9.', 'v2.19.9.local', '2.19.9.1'):
+            with self.subTest(tag=tag), patch.object(subprocess, 'check_output', return_value='a' * 40 + '\n'):
+                with self.assertRaisesRegex(ValueError, 'version tag'):
+                    release.plan(argparse.Namespace(ref=tag, dry_run=False, simple=False))
+
+    def test_four_component_archives_collect_and_verify(self):
+        version = '2.19.9.1'
+        target = {'goos': 'linux', 'goarch': 'amd64'}
+        Path('dist').mkdir()
+        archive = Path('dist/sub2api_2.19.9.1_linux_amd64.tar.gz')
+        archive.write_bytes(b'four-component release archive')
+        Path('dist/checksums.txt').write_text(f'{release.sha256(archive)}  {archive.name}\n')
+        release.collect(argparse.Namespace(version=version, sha='a' * 40, output='release-input', **target))
+        release.verify(argparse.Namespace(version=version, sha='a' * 40, input='release-input', simple=True))
+        self.assertEqual((Path('release-input') / archive.name).read_bytes(), archive.read_bytes())
+        self.assertEqual(release.archive_name(version, {'goos': 'windows', 'goarch': 'amd64'}),
+                         'sub2api_2.19.9.1_windows_amd64.zip')
+
     def test_dry_run_plan_resolves_matrix_without_a_new_tag(self):
         with patch.dict(os.environ, {'GITHUB_OUTPUT': 'outputs', 'GITHUB_REPOSITORY_OWNER': 'ExampleOwner'}), patch.object(subprocess, 'check_output', return_value='a' * 40 + '\n'):
             release.plan(argparse.Namespace(ref='feature/matrix', dry_run=True, simple=False))

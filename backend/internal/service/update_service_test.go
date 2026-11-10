@@ -76,6 +76,77 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	require.Equal(t, "wells974/sub2api", githubClient.latestRepo)
 }
 
+func TestCompareVersionsLocalRevision(t *testing.T) {
+	for _, tt := range []struct {
+		current string
+		latest  string
+		want    int
+	}{
+		{"2.19.9.1", "2.19.9.2", -1},
+		{"v2.19.9.2", "v2.19.9.1", 1},
+		{"2.19.9.2", "2.19.9.10", -1},
+		{"2.19.9.1", "2.19.9.1", 0},
+		{"2.19.9", "2.19.9.1", -1},
+		{"2.19.9.1", "2.19.9", 1},
+		{"2.19.9", "2.19.9.0", 0},
+		{"2.19.9.99", "2.19.10.1", -1},
+		{"2.19.9.99", "2.20.0.1", -1},
+		{"2.19.9.99", "3.0.0.1", -1},
+		{"2.19.9", "2.19.10", -1},
+		{"2.19.9.1-rc.1", "2.19.9.1", 0},
+	} {
+		t.Run(tt.current+"_to_"+tt.latest, func(t *testing.T) {
+			require.Equal(t, tt.want, compareVersions(tt.current, tt.latest))
+		})
+	}
+}
+
+func TestUpdateServiceCheckUpdateLocalRevisionFreshAndCached(t *testing.T) {
+	t.Setenv("UPDATE_GITHUB_REPO", "")
+	for _, tt := range []struct {
+		current   string
+		latest    string
+		hasUpdate bool
+	}{
+		{"2.19.9.1", "2.19.9.2", true},
+		{"2.19.9", "2.19.9.1", true},
+		{"2.19.9.2", "2.19.9.1", false},
+		{"2.19.9.1", "2.19.9.1", false},
+	} {
+		t.Run(tt.current+"_to_"+tt.latest, func(t *testing.T) {
+			client := &updateServiceGitHubClientStub{
+				release: &GitHubRelease{TagName: "v" + tt.latest},
+			}
+			svc := NewUpdateService(&updateServiceCacheStub{}, client, tt.current, "release")
+			for _, force := range []bool{true, false} {
+				info, err := svc.CheckUpdate(context.Background(), force)
+				require.NoError(t, err)
+				require.Equal(t, tt.latest, info.LatestVersion)
+				require.Equal(t, tt.hasUpdate, info.HasUpdate)
+				require.Equal(t, !force, info.Cached)
+			}
+		})
+	}
+}
+
+func TestUpdateServiceListRollbackVersionsLocalRevisions(t *testing.T) {
+	t.Setenv("UPDATE_GITHUB_REPO", "")
+	svc := newRollbackTestService("2.19.9.12", []*GitHubRelease{
+		{TagName: "v2.19.9.2"},
+		{TagName: "v2.19.9.13"},
+		{TagName: "v2.19.9.10"},
+		{TagName: "v2.19.9.12"},
+		{TagName: "v2.19.9.11"},
+		{TagName: "v2.19.9"},
+	})
+	versions, err := svc.ListRollbackVersions(context.Background())
+	require.NoError(t, err)
+	require.Len(t, versions, 3)
+	require.Equal(t, "2.19.9.11", versions[0].Version)
+	require.Equal(t, "2.19.9.10", versions[1].Version)
+	require.Equal(t, "2.19.9.2", versions[2].Version)
+}
+
 func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateService {
 	return NewUpdateService(
 		&updateServiceCacheStub{},

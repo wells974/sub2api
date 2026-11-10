@@ -14,12 +14,12 @@
 
 1. 在开发电脑上提交二开代码，按后文的发布步骤推送到 `wells974/sub2api`，等待完整 Release 工作流成功。确认自己的 GHCR 镜像可被服务器拉取，Release 同时包含平台程序包和 `checksums.txt`。
 2. 在服务器上备份数据库和配置，进入原部署目录，沿用原 Compose 项目名、文件、`.env`、数据库/Redis 配置及数据挂载。不要拿本地的整套配置覆盖线上配置，也不要执行 `docker compose down -v`。
-3. 在原 Compose 文件中，只修改应用服务的镜像，并向原有 `environment` 列表添加下面两项。以下是局部片段，不是完整配置；`2.19.3` 仅为示例，请替换成你已成功发布且高于线上版本的版本号。
+3. 在原 Compose 文件中，只修改应用服务的镜像，并向原有 `environment` 列表添加下面两项。以下是局部片段，不是完整配置；`2.19.9.1` 仅为示例，请替换成你已成功发布且高于线上版本的版本号。
 
 ```yaml
 services:
   sub2api:
-    image: ghcr.io/wells974/sub2api:2.19.3
+    image: ghcr.io/wells974/sub2api:2.19.9.1
     environment:
       - UPDATE_GITHUB_REPO=wells974/sub2api
       - SUB2API_PERSIST_UPDATES=true
@@ -60,13 +60,36 @@ docker compose -f deploy/docker-compose.local.yml -f deploy/docker-compose.fork.
 
 现有 `.github/workflows/release.yml` 可直接在自己的仓库运行，它按当前仓库发布 Releases 和 GHCR 镜像。不要将二开更新推送到 `ranxi2001/sub2api`。
 
+继续使用原来的 `VERSION` 文件，不增加个人前缀或额外版本文件。三段 `vX.Y.Z` 保留给所基于的上游 / fork 版本，自用二开版本统一使用四段 `vX.Y.Z.N`，例如基于 `v2.19.9` 发布 `v2.19.9.1`，后续二开修订递增为 `v2.19.9.2`。上游标签仍然完整保留，用来选择合并哪个发行版本；将它们映射为本地的 `upstream/vX.Y.Z`，方便区分更新来源。当前 checkout 的上游 remote 名为 `origin`，首次配置如下：
+
+```bash
+git config --local remote.origin.tagOpt --no-tags
+git config --local --add remote.origin.fetch 'refs/tags/*:refs/tags/upstream/*'
+git fetch origin
+```
+
+`--no-tags` 禁用默认的同名标签获取，而显式的 fetch 映射负责获取上游标签；两者应配合使用。这项配置只对当前克隆有效，重新克隆后需重新设置；已经配置时不要重复 `--add`。若上游 remote 叫 `upstream`，将配置中的 `remote.origin` 换成 `remote.upstream`。
+
+查看上游发行版本，并按标签定位代码：
+
+```bash
+git tag --list 'upstream/*' --sort=-version:refname
+# 将 vX.Y.Z 替换成列表中要合并的上游版本
+git rev-parse 'refs/tags/upstream/vX.Y.Z^{commit}'
+git log --oneline HEAD..refs/tags/upstream/vX.Y.Z
+# 确认目标版本和改动后，在自己的开发分支上合并
+git merge refs/tags/upstream/vX.Y.Z
+```
+
+例如上游的 `v3.0.0` 在本地叫 `upstream/v3.0.0`，基于它的自用二开版本从 `v3.0.0.1` 开始发布。此配置不会删除或改写已经存在的普通标签，已有同名标签仍不能复用。不要使用 `git fetch --tags` 绕过映射，也不要用 `git push --tags` 将 `upstream/*` 等标签批量推送；只向自己的仓库推送本次发布的具体标签。
+
 1. 将全部待发布修改提交到本地 Git；确认推送目标是 `wells974/sub2api`。本地分支名无需与远程相同。
-2. 将提交推送到自己的仓库，然后创建一个新的 `v主版本.次版本.修订号` 标签，并将标签推送到同一仓库。标签必须对应包含此次二开修改的提交。
+2. 将提交推送到自己的仓库，然后创建一个新的 `v主版本.次版本.修订号.二开修订号` 标签，并将标签推送到同一仓库。标签必须对应包含此次二开修改的提交。
 3. 首次在 fork 的 Actions 页面启用工作流。使用完整 Release 流程：`simple_release=false`，仓库变量 `SIMPLE_RELEASE` 也不能设为 `true`。仅发布镜像的 simple 模式无法供页面更新。
 4. 等待 Release 工作流成功，确认发布为正式版本（非 draft、非 prerelease），并检查附件含所需平台的 `sub2api_<版本>_linux_amd64.tar.gz` / `sub2api_<版本>_linux_arm64.tar.gz` 以及 `checksums.txt`。
 5. 在已安装本 fork 的页面上点击检查更新，再点击立即更新及立即重启。
 
-版本号前三段必须递增。现有比较逻辑忽略 `-xxx` 后缀，不能仅把同一个版本改成 `-custom1` 来触发更新。Release 构建流程会同步版本号、嵌入前端并设置 `BuildType=release`，使页面显示安装按钮。
+更新检查和历史回滚按四段数字依次比较，同一上游版本只需递增第四段，例如 `2.19.9.2` 高于 `2.19.9.1`；兼容已有三段版本，缺少的第四段按 `0` 处理。比较逻辑忽略 `-xxx` 后缀，不能仅把同一个版本改成 `-custom1` 来触发更新。Release 构建流程会同步版本号、嵌入前端并设置 `BuildType=release`，使页面显示安装按钮。
 
 下面使用独立的 `fork` remote，避免更改已有 `origin`。这些是发布命令示例，**本次代码修改本身不会执行推送或发布**：
 
@@ -75,9 +98,9 @@ git remote add fork https://github.com/wells974/sub2api.git
 # 若 fork 已存在，先用 git remote get-url fork 核对地址，无需重复添加。
 git push fork HEAD:production
 
-# 示例：确认 v2.19.3 尚未使用，且大于你正在运行的版本后再执行。
-git tag -a v2.19.3 -m '发布二开版本及自定义页面更新'
-git push fork v2.19.3
+# 示例：确认 v2.19.9.1 尚未使用，且大于你正在运行的版本后再执行。
+git tag -a v2.19.9.1 -m '发布二开版本及自定义页面更新'
+git push fork v2.19.9.1
 ```
 
 仅在本地提交代码，或只推送分支而没有发布 Release，都不会产生页面可安装的新版本。发布失败时应修复工作流；不要仅手工创建一个没有构建附件的 Release。
