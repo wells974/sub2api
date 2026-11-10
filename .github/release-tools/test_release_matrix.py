@@ -170,6 +170,49 @@ class ReleaseMatrixTest(unittest.TestCase):
         self.assertEqual(release.archive_name(version, {'goos': 'windows', 'goarch': 'amd64'}),
                          'sub2api_2.19.9.1_windows_amd64.zip')
 
+    def test_reauth_runtime_build_packages_three_and_four_component_versions(self):
+        fake_bin = Path('bin')
+        fake_bin.mkdir()
+        docker = fake_bin / 'docker'
+        docker.write_text('''#!/bin/sh
+printf '%s\\n' "$*" >> "$DOCKER_LOG"
+for arg do
+  case "$arg" in
+    type=local,dest=*)
+      dest=${arg#type=local,dest=}
+      printf 'fixture worker' > "$dest/worker.py"
+      ;;
+  esac
+done
+''')
+        docker.chmod(0o755)
+        for version in ('2.19.9', '2.19.9.1', '2.19.9.1-rc.1'):
+            for arch in ('amd64', 'arm64'):
+                with self.subTest(version=version, arch=arch):
+                    directory = Path(f'build-{version}-{arch}')
+                    directory.mkdir()
+                    log = directory.resolve() / 'docker.log'
+                    env = {**os.environ, 'PATH': str(fake_bin.resolve()) + os.pathsep + os.environ['PATH'],
+                           'VERSION': version, 'ARCH': arch, 'DOCKER_LOG': str(log)}
+                    result = subprocess.run(['bash', str(ROOT / 'tools/reauth-runtime/build.sh')],
+                                            cwd=directory, env=env, text=True, capture_output=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    archive = directory / f'reauth-output/sub2api-reauth_{version}_linux_{arch}.tar.gz'
+                    with tarfile.open(archive) as package:
+                        self.assertEqual(package.extractfile('./worker.py').read(), b'fixture worker')
+                    self.assertIn(release.sha256(archive), result.stdout)
+                    self.assertIn(f'--platform linux/{arch}', log.read_text())
+
+    def test_reauth_runtime_build_rejects_invalid_versions_before_docker(self):
+        for version in ('2.19', '2.19.9.1.2', '2.19.9.', '../2.19.9.1'):
+            with self.subTest(version=version):
+                result = subprocess.run(['bash', str(ROOT / 'tools/reauth-runtime/build.sh')],
+                                        env={**os.environ, 'VERSION': version, 'ARCH': 'amd64'},
+                                        text=True, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Invalid VERSION', result.stderr)
+        self.assertFalse(Path('reauth-output').exists())
+
     def test_dry_run_plan_resolves_matrix_without_a_new_tag(self):
         with patch.dict(os.environ, {'GITHUB_OUTPUT': 'outputs', 'GITHUB_REPOSITORY_OWNER': 'ExampleOwner'}), patch.object(subprocess, 'check_output', return_value='a' * 40 + '\n'):
             release.plan(argparse.Namespace(ref='feature/matrix', dry_run=True, simple=False))

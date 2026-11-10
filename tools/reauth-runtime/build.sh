@@ -2,7 +2,10 @@
 set -euo pipefail
 : "${VERSION:?set VERSION}"
 : "${ARCH:?set ARCH}"
-[[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]
+if ! [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9.-]+)?$ ]]; then
+  echo 'Invalid VERSION: expected X.Y.Z or X.Y.Z.N, optionally followed by -suffix' >&2
+  exit 1
+fi
 [[ $ARCH == amd64 || $ARCH == arm64 ]]
 runtime_output=$(mktemp -d)
 trap 'rm -rf "$runtime_output"' EXIT
