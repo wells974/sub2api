@@ -33,7 +33,7 @@
 
 第三批已覆盖：
 
-- `/api/v1/usage/errors` 普通用户列表的 message、`/api/v1/usage/errors/:id` 的 message 和 error_body。使用读取时投影，历史记录同样适用；不改原存储。通过内部 endpoint、错误类型、错误文案/正文中的明确渠道标识识别（含历史配置名与 JSON 转义的错误字段）。渠道无法识别且没有已知标识的其他错误保持现有展示。
+- `/api/v1/usage/errors` 普通用户列表的 message、`/api/v1/usage/errors/:id` 的 message 和 error_body。使用读取时投影，历史记录同样适用；不改原存储。通过内部 endpoint、错误类型、错误文案/正文中的明确渠道标识识别（含历史分隔写法、配置名与 JSON 转义的错误字段）。渠道无法识别且没有已知标识的其他错误保持现有展示。
 - 详情 error_body 重建为固定错误对象，不逐字段透传原始 JSON/HTML/截断 SSE。保留记录 ID、时间、状态码、上游 HTTP 状态、类别和用户请求属性；归属校验在投影前完成。
 - 公开设置 API 与首页 HTML 的 `__APP_CONFIG__`：默认把 `excel_bps_enabled` 改为中性 `tool_bridge_enabled`，布尔值不变。前端独立兼容函数读取新旧格式，保持原有后台开关消费方式。管理员 Settings DTO/数据库键仍保留原名。
 - 图片响应头：只在 BPS 图片出口对副本过滤明确的渠道标识/调试头（包括含渠道 URL 的 Location），再走原共享白名单。即使扩大共享白名单也不暴露这些标识；原始响应头仍供请求关联、配额和内部诊断使用。
@@ -129,3 +129,18 @@ node node_modules/vue-tsc/bin/vue-tsc.js --noEmit
 ```
 
 最终 race 验证通过：service 95、handler 25、DTO 1 个通过项（包含子测试，service 已纳入最后补充的历史配置名/分隔写法/图片中转错误）。`git diff --check` 通过。以上均为本地模拟，未执行生产部署或真实上游验证。
+
+
+## 三批整体复查修复（2026-11-12）
+
+1. **Ops 再次解析中性响应的问题**：原来仅保留了内部返回错误、部分 Ops marker 和结构化日志；Ops 中间件仍可能解析中性 wire 文案，导致普通错误/部分 SSE 的入库文案、错误码分类、忽略规则与 legacy 不同。新增 `openai_excel_bps_ops_presentation.go`，展示边界保留小型原错误副本；中间件读取捕获响应时，仅对匹配本次公开 type/code/message 的错误对象恢复内部副本，然后继续原有分类和入库脱敏流程。该副本不写入客户端、不更改上游状态、不复制完整请求或长响应。原中间件仅增加一处调用；既有 BridgeFailure 专用诊断路径保持不变。
+2. **历史诊断识别遗漏**：未知嵌套字段、JSON 转义的字段名/值以及 SSE data 内的转义字符串也会检测。`Excel/BPS`、`Excel-BPS`、大小写/空白变化统一识别；普通 Excel 文件错误、用户标签和生成内容不做全局替换。
+3. **扩展响应头遗漏**：补充 `X-Excel-*` 和值为单独 `Excel`/`BPS` 的标识头，仍只过滤 BPS 图片出口副本；原请求 ID、重试信息和内部完整响应头保留。
+4. **历史授权分类**：内部错误码统一按大小写不敏感方式分类，避免 `OPENAI_EXCEL_AUTH_*` 在历史提取后变成通用错误。legacy 不经过该映射。
+
+共同识别规则移到独立 `openai_excel_bps_error_markers.go`，错误记录和响应头共用；没有增加数据库字段、全局 ResponseWriter 包装或前端表单改动。
+
+复查范围包括普通 JSON、失败 SSE、compact、图片出口、普通用户历史记录、管理员/观察员诊断、公开配置 API/首页注入，以及现有用量 DTO/导出和监控视图。保留此前说明的边界：自定义名称、用户/模型内容、前端静态实现及内部图片能力 URL 不属于全站指纹隐藏；不能据此宣称任何渠道信息都无法推断。
+
+
+整体复查验证结果：后端相关回归 service 1489、handler 285、DTO 3 个通过项（合计 1777，含子测试）；展示路径 race 检查 service 102、handler 30 个通过项；前端 5 个文件 53 项通过。新增端到端 Ops 中间件测试对比 JSON/SSE 在 neutral 与 legacy 下的原始入库文案、错误类型、归因、状态及业务分类，并验证客户端仅得到中性提示。`git diff --check` 通过。未部署生产，未调用真实上游。

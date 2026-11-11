@@ -18,10 +18,11 @@ func presentExcelBPSImageResponse(c *gin.Context, original *http.Response) *http
 	copy.Header = original.Header.Clone()
 	for key, values := range copy.Header {
 		lower := strings.ToLower(key)
-		private := hasExcelBPSMarker(key) || strings.HasPrefix(lower, "x-bps-") ||
+		private := hasExcelBPSMarker(key) || strings.HasPrefix(lower, "x-bps-") || strings.HasPrefix(lower, "x-excel-") ||
 			lower == "x-codex2api-upstream"
 		for _, value := range values {
-			private = private || hasExcelBPSMarker(value)
+			brand := strings.ToLower(strings.TrimSpace(value))
+			private = private || hasExcelBPSMarker(value) || brand == "bps" || brand == "excel"
 		}
 		if private {
 			delete(copy.Header, key)

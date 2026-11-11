@@ -46,23 +46,7 @@ func isExcelBPSStoredError(original *OpsErrorLog, body string) bool {
 			return true
 		}
 	}
-	// JSON escaping in old error bodies must not defeat route recognition.
-	for _, path := range []string{"error.code", "error.type", "error.message", "response.error.code", "response.error.message"} {
-		if hasExcelBPSMarker(gjson.Get(body, path).String()) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasExcelBPSMarker(value string) bool {
-	lower := strings.ToLower(value)
-	return strings.Contains(lower, "basispoints") || strings.Contains(lower, "bps.openai.com") ||
-		strings.Contains(lower, "excel bps") || strings.Contains(lower, "excel oauth") ||
-		strings.Contains(lower, "excel / bps") || strings.Contains(lower, "bps image") ||
-		strings.Contains(lower, "excel_bps") || strings.Contains(lower, "sub2api_bps_") ||
-		strings.Contains(lower, "excel_oauth_") || strings.Contains(lower, "openai_excel_auth_") ||
-		strings.Contains(lower, "/api/bps-images/")
+	return hasExcelBPSDiagnosticMarker(body)
 }
 
 func publicExcelBPSStoredError(original *OpsErrorLog, body string) errorpresentation.Error {

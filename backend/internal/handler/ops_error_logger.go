@@ -1153,7 +1153,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			logOpsStreamErrorValue(c, ops, status, marked)
 			return
 		}
-		body := w.capturedBytes()
+		body := service.RestoreOpsErrorPresentation(c, w.capturedBytes())
 		parsed := parseOpsErrorResponse(body)
 		if !parsed.StreamFailure {
 			if terminal, ok := w.capturedTerminalError(); ok {

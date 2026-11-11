@@ -55,10 +55,13 @@ func PresentExcelBPSError(c *gin.Context, status int, original gin.H) gin.H {
 		zap.String("public_code", public.Code), zap.String("internal_error", diagnostic))
 	// Allowlist only these fields. In particular param/failure_stage/repair
 	// metadata must not escape through a newly added upstream error field.
-	return gin.H{"type": public.Type, "code": public.Code, "message": public.Message}
+	body := gin.H{"type": public.Type, "code": public.Code, "message": public.Message}
+	rememberExcelBPSOpsPresentation(c, original, body)
+	return body
 }
 
 func excelBPSPublicErrorKind(code, message string, status int) errorpresentation.Kind {
+	code = strings.ToLower(code)
 	switch code {
 	case "basispoints_protocol_error":
 		// This stronger statement is only appropriate for withheld tool batches.
@@ -105,7 +108,7 @@ func excelBPSPublicErrorKind(code, message string, status int) errorpresentation
 		"basispoints_schema_repair_settings_invalid", "basispoints_tool_catalog_settings_invalid", "basispoints_tool_catalog_preparation_failed", "basispoints_usage_invalid":
 		return errorpresentation.Unavailable
 	}
-	if strings.HasPrefix(code, "basispoints_auth_") || strings.HasPrefix(code, "OPENAI_EXCEL_AUTH_") {
+	if strings.HasPrefix(code, "basispoints_auth_") || strings.HasPrefix(code, "openai_excel_auth_") {
 		return errorpresentation.Unavailable
 	}
 	// Unknown future codes fail closed to the fixed generic message.
