@@ -1,4 +1,8 @@
+import pool from './accountOpsPool'
+
 export default {
+  pool,
+  "account_pool": "Account pool status",
   "workspaceTitle": "Account notifications and thresholds",
   "smartTitle": "Smart operations",
   "title": "Account operations",

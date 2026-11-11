@@ -14,6 +14,7 @@ import (
 const accountOpsSettingsKey = "account_ops_notifications_v1"
 
 type AccountOpsConfig struct {
+	PoolNotifications   *AccountOpsPoolConfig   `json:"pool_notifications,omitempty"`
 	Enabled             bool                    `json:"enabled"`
 	Recipient           string                  `json:"recipient"`
 	EmailName           string                  `json:"email_name,omitempty"`
@@ -49,13 +50,13 @@ func ValidateAccountOpsConfig(c AccountOpsConfig) (err error) {
 	if err := validateAccountOpsExtras(c); err != nil {
 		return err
 	}
-	if c.Enabled && (!c.hasDestination() || (!c.BalanceLow && !c.WeeklyQuota && !c.hasThreshold() && !c.hasQuotaThreshold())) {
+	if c.Enabled && (!c.hasDestination() || (!c.BalanceLow && !c.WeeklyQuota && !c.hasThreshold() && !c.hasQuotaThreshold() && !c.PoolEnabled())) {
 		return errors.New("select an alert type and configure a recipient before enabling")
 	}
 	return nil
 }
 func (c AccountOpsConfig) Allows(kind string) bool {
-	return c.Enabled && c.hasDestination() && ((kind == "balance_low" && c.BalanceLow) || (kind == "weekly_quota" && c.WeeklyQuota) || (kind == "balance_threshold" && c.hasThreshold()) || (kind == "quota_threshold" && c.hasQuotaThreshold()))
+	return c.Enabled && c.hasDestination() && ((kind == AccountOpsPoolKind && c.PoolEnabled()) || (kind == "balance_low" && c.BalanceLow) || (kind == "weekly_quota" && c.WeeklyQuota) || (kind == "balance_threshold" && c.hasThreshold()) || (kind == "quota_threshold" && c.hasQuotaThreshold()))
 }
 
 type AccountOpsEvent struct {
@@ -228,6 +229,7 @@ func (s *AccountOpsService) start(runSharedJobs bool) {
 				}
 			case <-ticker.C:
 				if s.refreshConfig(ctx, runSharedJobs) && runSharedJobs {
+					s.scanAccountPool(ctx)
 					s.scanBalances(ctx)
 					s.deliver(ctx)
 				}

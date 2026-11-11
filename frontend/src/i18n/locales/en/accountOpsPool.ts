@@ -1,0 +1,16 @@
+export default {
+  title: 'Account pool notifications',
+  description: 'Uses the enabled channels above and the Enable account alerts master switch. Checks about every 15 seconds and notifies only on observed changes.',
+  enabled: 'Enable pool notifications',
+  states: 'Account errors, invalid credentials, failed re-logins and recovery',
+  counts: 'Available / total count changes (also sends the initial count)',
+  hint: 'Counts undeleted parent accounts across all platforms, including disabled accounts in the total. Shadows are excluded. Available means schedulable with no confirmed authentication failure; model access and live concurrency may differ.',
+  bark: 'For Bark, use a custom Webhook with URL https://api.day.app/YOUR_DEVICE_KEY and the JSON template below. Keep the device key in the URL so the notification channel encrypts it.',
+  save: 'Save pool settings',
+  saving: 'Saving…',
+  failed: 'Could not save pool settings. Please retry.',
+  select: 'Select at least one change type.',
+  available: 'Available / total',
+  previous: 'Previously',
+  omitted: '{count} more account changes',
+}

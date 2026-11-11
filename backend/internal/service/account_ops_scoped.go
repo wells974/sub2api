@@ -8,6 +8,8 @@ import (
 )
 
 type AccountOpsNotificationSettings struct {
+	PoolNotifications *AccountOpsPoolConfig `json:"pool_notifications"`
+
 	Enabled         *bool   `json:"enabled"`
 	Recipient       *string `json:"recipient"`
 	EmailName       *string `json:"email_name"`
@@ -129,6 +131,9 @@ func (s *AccountOpsService) updateConfig(ctx context.Context, mutate func(*Accou
 }
 func (s *AccountOpsService) SaveNotificationSettings(ctx context.Context, v AccountOpsNotificationSettings) (AccountOpsConfig, error) {
 	return s.updateConfig(ctx, func(c *AccountOpsConfig) error {
+		if v.PoolNotifications != nil {
+			c.PoolNotifications = v.PoolNotifications
+		}
 		if v.Enabled != nil {
 			c.Enabled = *v.Enabled
 		}

@@ -57,12 +57,12 @@
                 data-testid="notification-record">
                 <td class="px-5 py-4">
                   <p class="font-medium">{{ event.group_name || event.account_name }}</p>
-                  <p class="mt-1 text-xs text-gray-500">#{{ event.account_id }} · {{ t(`accountOps.${event.kind}`) }}</p>
+                  <p class="mt-1 text-xs text-gray-500"><template v-if="event.account_id">#{{ event.account_id }} · </template> {{ t(`accountOps.${event.kind}`) }}</p>
                 </td>
                 <td class="px-4 py-4"><span class="rounded px-2 py-1 text-xs"
                     :class="event.phase === 'recovery' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400' : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400'">{{ t(event.phase ? `accountOps.phases.${event.phase}` : 'accountOps.failureSignal') }}</span>
                 </td>
-                <td class="px-4 py-4 text-xs"><template v-if="event.kind === 'balance_threshold'">{{ event.details?.balance }}
+                <td class="px-4 py-4 text-xs"><AccountOpsPoolEvent v-if="event.kind === 'account_pool'" :details="event.details?.pool" /><template v-else-if="event.kind === 'balance_threshold'">{{ event.details?.balance }}
                     {{ event.details?.unit }}<span class="mt-1 block text-gray-500">{{ t('accountOps.thresholdValue') }}
                       {{ event.details?.threshold }} {{ event.details?.unit }}</span></template><template
                     v-else-if="event.kind === 'quota_threshold'">{{ event.details?.used_percent }}% · {{ event.details?.window }}<span
@@ -145,11 +145,12 @@
             <button type="button" class="btn btn-secondary text-sm" :disabled="thresholdLoading || mutating" data-testid="edit-account-groups" @click="showGroupDialog = true">{{ t('common.edit') }}</button>
           </div>
         </section>
+        <AccountOpsPoolSettings :config="remote.config" :disabled="mutating || globalSaving" @saving="globalSaving = $event" @saved="acceptConfig" @error="app.showError" />
         <AccountOpsRuleList ref="ruleList" :accounts="thresholdAccounts" :groups="accountGroups" :config="remote.config" :loading="thresholdLoading"
           :ready="thresholdReady" :error="thresholdError" :busy="mutating"
           @batch-edit="batchAccounts = $event" @edit-group="showGroupDialog = true" @toggle="toggleGroup">
           <template #global-settings>
-            <AccountOpsGlobalSettings :config="remote.config" :disabled="mutating" @saving="globalSaving = $event" @saved="acceptConfig"
+            <AccountOpsGlobalSettings :config="remote.config" :disabled="mutating || globalSaving" @saving="globalSaving = $event" @saved="acceptConfig"
               @error="app.showError" />
           </template>
         </AccountOpsRuleList>
@@ -187,6 +188,8 @@ import AccountOpsDeliveryDetails from '@/components/admin/operations/AccountOpsD
 import AccountOpsWebhookDialog from '@/components/admin/operations/AccountOpsWebhookDialog.vue'
 import AccountOpsEmailDialog from '@/components/admin/operations/AccountOpsEmailDialog.vue'
 import AccountOpsAddChannelDialog from '@/components/admin/operations/AccountOpsAddChannelDialog.vue'
+import AccountOpsPoolSettings from '@/components/admin/operations/AccountOpsPoolSettings.vue'
+import AccountOpsPoolEvent from '@/components/admin/operations/AccountOpsPoolEvent.vue'
 import AccountOpsGlobalSettings from '@/components/admin/operations/AccountOpsGlobalSettings.vue'
 import AccountOpsGroupDialog from '@/components/admin/operations/AccountOpsGroupDialog.vue'
 import { getAccountOpsSettings, saveAccountOpsNotificationSettings, getAccountOpsEvents, getAccountOpsThresholdAccounts, getAccountOpsThresholdGroups, testAccountOpsWebhook, saveAccountOpsRuleGroups, deleteAccountOpsWebhook } from '@/api/admin/accountOps'
@@ -208,10 +211,10 @@ watch(thresholdAccounts, accounts => {
   const selected = new Set(batchAccounts.value.map(account => account.account_id))
   batchAccounts.value = accounts.filter(account => selected.has(account.account_id))
 })
-const query = ref(''), kind = ref('all'), phase = ref('all'), alertKinds = ['balance_threshold','quota_threshold','balance_low','weekly_quota']
+const query = ref(''), kind = ref('all'), phase = ref('all'), alertKinds = ['account_pool','balance_threshold','quota_threshold','balance_low','weekly_quota']
 const editingHook = ref<AccountOpsWebhook|null>(null), showWebhook = ref(false), showEmail = ref(false), testingId = ref<string|null>(null)
 let version = 0, accountsVersion = 0, testSequence = 0, mutationSequence = 0, paginationSequence = 0, alive = true, timer: ReturnType<typeof setInterval>|null = null
-const normalize = (c: AccountOpsConfig): AccountOpsConfig => ({ enabled:c.enabled, recipient:c.recipient,email_name:c.email_name ?? '', balance_low:c.balance_low, weekly_quota:c.weekly_quota, cooldown_minutes:c.cooldown_minutes, webhooks:(c.webhooks??[]).map(h=>({id:h.id,name:h.name,provider:h.provider,enabled:h.enabled,url_configured:h.url_configured===true,secret_configured:h.secret_configured===true,message_template:h.message_template})), groups:(c.groups??[]).map(g=>({id:g.id,name:g.name,provider:g.provider,site:g.site,account_ids:g.account_ids ? [...g.account_ids] : []})), balance_thresholds:(c.balance_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})), quota_thresholds:(c.quota_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})) })
+const normalize = (c: AccountOpsConfig): AccountOpsConfig => ({ pool_notifications:c.pool_notifications ? { ...c.pool_notifications } : undefined, enabled:c.enabled, recipient:c.recipient,email_name:c.email_name ?? '', balance_low:c.balance_low, weekly_quota:c.weekly_quota, cooldown_minutes:c.cooldown_minutes, webhooks:(c.webhooks??[]).map(h=>({id:h.id,name:h.name,provider:h.provider,enabled:h.enabled,url_configured:h.url_configured===true,secret_configured:h.secret_configured===true,message_template:h.message_template})), groups:(c.groups??[]).map(g=>({id:g.id,name:g.name,provider:g.provider,site:g.site,account_ids:g.account_ids ? [...g.account_ids] : []})), balance_thresholds:(c.balance_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})), quota_thresholds:(c.quota_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})) })
 const eventKey = (e: AccountOpsEvent) => e.id ?? `${e.account_id}:${e.kind}:${e.phase??'legacy'}:${e.first_seen}`
 const filteredEvents = computed(()=>events.value.filter(e=>(kind.value==='all'||kind.value===e.kind)&&(phase.value==='all'||phase.value===(e.phase??'alert'))&&`${e.account_name} ${e.account_id}`.toLowerCase().includes(query.value.toLowerCase().trim())))
 const date = (value: string) => { const d=new Date(value);return Number.isFinite(d.getTime())?d.toLocaleString():'-' }

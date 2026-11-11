@@ -1,4 +1,8 @@
+import pool from './accountOpsPool'
+
 export default {
+  pool,
+  "account_pool": "号池状态",
   "workspaceTitle": "账号提醒与阈值",
   "smartTitle": "智能运维",
   "title": "账号运维",

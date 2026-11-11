@@ -54,6 +54,8 @@ type AccountOpsQuotaRule struct {
 	Window           string  `json:"window"`
 }
 type AccountOpsDetails struct {
+	Pool *AccountOpsPoolDetails `json:"pool,omitempty"`
+
 	UsedPercent      *float64   `json:"used_percent,omitempty"`
 	ThresholdPercent *float64   `json:"threshold_percent,omitempty"`
 	Window           string     `json:"window,omitempty"`
@@ -118,6 +120,7 @@ func (c AccountOpsConfig) hasQuotaThreshold() bool {
 	return false
 }
 func (c AccountOpsConfig) public() AccountOpsConfig {
+	c.PoolNotifications = c.PoolNotifications.clone()
 	c.Webhooks = append([]AccountOpsWebhook{}, c.Webhooks...)
 	c.Groups = append([]AccountOpsGroup{}, c.Groups...)
 	for i := range c.Groups {
@@ -167,6 +170,9 @@ func validateAccountOpsURL(provider, raw string) error {
 	return nil
 }
 func validateAccountOpsExtras(c AccountOpsConfig) error {
+	if err := c.validatePoolNotifications(); err != nil {
+		return err
+	}
 	if err := validateAccountOpsChannelName(c.EmailName); err != nil {
 		return err
 	}
@@ -332,6 +338,10 @@ func (s *AccountOpsService) saveConfigWithRuleScope(ctx context.Context, c Accou
 	if err != nil {
 		return err
 	}
+	if c.PoolNotifications == nil {
+		c.PoolNotifications = old.PoolNotifications // Preserve extension settings sent by older clients.
+	}
+	c.PoolNotifications = c.PoolNotifications.clone()
 	normalizeOpsFlags(&c, old)
 	byID := map[string]AccountOpsWebhook{}
 	for _, w := range old.Webhooks {

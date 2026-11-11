@@ -1,3 +1,4 @@
+import type { AccountOpsPoolConfig, AccountOpsPoolDetails } from './accountOpsPool'
 import { apiClient } from '../client'
 export type AccountOpsWebhookProvider = 'wecom' | 'dingtalk' | 'feishu' | 'custom'
 export interface AccountOpsWebhook {
@@ -67,6 +68,7 @@ export interface AccountOpsGroup {
   account_ids: number[]
 }
 export interface AccountOpsConfig {
+  pool_notifications?: AccountOpsPoolConfig
   enabled: boolean
   recipient: string
   email_name?: string
@@ -88,7 +90,7 @@ export interface AccountOpsEvent {
   account_name: string
   group_id?: string
   group_name?: string
-  kind: 'balance_low' | 'weekly_quota' | 'balance_threshold' | 'quota_threshold'
+  kind: 'account_pool' | 'balance_low' | 'weekly_quota' | 'balance_threshold' | 'quota_threshold'
   signal: string
   http_status: number
   first_seen: string
@@ -98,7 +100,7 @@ export interface AccountOpsEvent {
   last_sent_at: string | null
   next_send_at: string
   attempts: number
-  details?: { balance?: number; threshold?: number; unit?: string; used_percent?: number; threshold_percent?: number; window?: string; observed_at?: string; resets_at?: string }
+  details?: { pool?: AccountOpsPoolDetails; balance?: number; threshold?: number; unit?: string; used_percent?: number; threshold_percent?: number; window?: string; observed_at?: string; resets_at?: string }
   deliveries?: Record<string, { provider: string; name?: string; status: 'sent' | 'failed'; attempts: number; last_sent_at?: string }>
 }
 export type AccountOpsNotificationSettings = Partial<Pick<AccountOpsConfig, 'enabled' | 'recipient' | 'email_name' | 'balance_low' | 'weekly_quota' | 'cooldown_minutes'>>

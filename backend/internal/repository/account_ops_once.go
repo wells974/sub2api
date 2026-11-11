@@ -230,7 +230,7 @@ func (r *accountOpsRepository) suppressTransitions(ctx context.Context, exec ops
 	if err != nil {
 		return err
 	}
-	_, err = exec.ExecContext(ctx, `UPDATE account_ops_threshold_events e SET state='suppressed',lease='',lease_until=NULL WHERE state IN ('pending','failed','sending') AND (NOT $1 OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements($2::jsonb) x WHERE x->>'group_id'=e.group_id AND x->>'kind'=e.kind AND (e.criteria='' OR x->>'criteria'=e.criteria) AND ((e.phase='alert' AND (x->>'alert')::boolean) OR (e.phase='recovery' AND (x->>'recovery')::boolean))))`, c.Enabled, string(raw))
+	_, err = exec.ExecContext(ctx, `UPDATE account_ops_threshold_events e SET state='suppressed',lease='',lease_until=NULL WHERE kind<>'account_pool' AND state IN ('pending','failed','sending') AND (NOT $1 OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements($2::jsonb) x WHERE x->>'group_id'=e.group_id AND x->>'kind'=e.kind AND (e.criteria='' OR x->>'criteria'=e.criteria) AND ((e.phase='alert' AND (x->>'alert')::boolean) OR (e.phase='recovery' AND (x->>'recovery')::boolean))))`, c.Enabled, string(raw))
 	if err != nil {
 		return err
 	}

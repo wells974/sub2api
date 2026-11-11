@@ -135,6 +135,9 @@ func (r *accountOpsRepository) SuppressDisabled(ctx context.Context, c service.A
 	return tx.Commit()
 }
 func (r *accountOpsRepository) suppressDisabled(ctx context.Context, exec opsConfigExecutor, c service.AccountOpsConfig) error {
+	if err := suppressAccountOpsPool(ctx, exec, c); err != nil {
+		return err
+	}
 	if err := r.suppressTransitions(ctx, exec, c); err != nil {
 		return err
 	}
