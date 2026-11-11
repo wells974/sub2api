@@ -744,7 +744,7 @@ func (s *OpsService) ListUserErrorRequests(ctx context.Context, userID int64, fi
 	}
 	items := make([]*UserErrorRequest, 0, len(list.Errors))
 	for _, e := range list.Errors {
-		if r := ToUserErrorRequest(e); r != nil {
+		if r := toPublicUserErrorRequest(e); r != nil {
 			items = append(items, r)
 		}
 	}
@@ -785,7 +785,7 @@ func (s *OpsService) GetUserErrorRequestDetail(ctx context.Context, userID, id i
 	if err != nil {
 		return nil, err
 	}
-	return ToUserErrorRequestDetail(detail), nil
+	return toPublicUserErrorRequestDetail(detail), nil
 }
 
 func (s *OpsService) getOwnedErrorRequestDetail(ctx context.Context, userID, id int64) (*OpsErrorLogDetail, error) {

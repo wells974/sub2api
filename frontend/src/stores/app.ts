@@ -3,6 +3,7 @@
  * Manages global UI state including sidebar, loading indicators, and toast notifications
  */
 
+import { normalizePublicSettings } from '@/utils/publicSettingsPresentation'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Toast, ToastType, PublicSettings } from '@/types'
@@ -290,6 +291,7 @@ export const useAppStore = defineStore('app', () => {
    * Apply settings to store state (internal helper to avoid code duplication)
    */
   function applySettings(config: PublicSettings): void {
+    config = normalizePublicSettings(config)
     if (typeof window !== 'undefined') {
       window.__APP_CONFIG__ = { ...config }
     }
