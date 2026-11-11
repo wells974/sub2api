@@ -55,6 +55,7 @@ func (b *Bridge) StreamWithRepair(ctx context.Context, upstream io.ReadCloser, r
 // StreamWithRepairs separates transport correction, first-turn regeneration and
 // safe unknown-target continuations. None can dispatch unvalidated tools.
 func (b *Bridge) StreamWithRepairs(ctx context.Context, upstream io.ReadCloser, repair ToolRepairFunc, unknown RepairToolCall) io.ReadCloser {
+	repair, unknown = schemaRepairCallbacks(ctx, repair, unknown)
 	ctx, cancel := context.WithCancel(ctx)
 	reader, writer := io.Pipe()
 	body := &streamBody{PipeReader: reader, upstream: upstream, cancel: cancel}
@@ -75,6 +76,7 @@ func (b *Bridge) StreamWithRepairs(ctx context.Context, upstream io.ReadCloser, 
 		}
 	}
 	go func() {
+		defer finishSchemaRepairStream(ctx)
 		defer cancel()
 		stop := context.AfterFunc(ctx, func() {
 			_ = writer.CloseWithError(ctx.Err())
@@ -106,7 +108,7 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 			return err
 		}
 		_, err = fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", kind, raw)
-		if err == nil && b.clientStream && hasVisibleStreamContent(kind, payload) {
+		if err == nil && b.clientStream && (hasVisibleStreamContent(kind, payload) || schemaRepairVisibleContent(ctx, payload)) {
 			visibleContent = true
 		}
 		return err
@@ -247,7 +249,7 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 							return err
 						}
 					}
-				} else if err := b.translateCompleted(ctx, response, repair); err != nil {
+				} else if err := b.translateCompletedWithSchema(ctx, response, repair, visibleContent); err != nil {
 					return err
 				}
 

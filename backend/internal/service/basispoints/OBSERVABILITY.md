@@ -7,6 +7,8 @@
 
 第二批配置与图片历史恢复见 [IMAGE_BUDGET.md](IMAGE_BUDGET.md)。
 
+第三批一次 Schema 纠错见 [SCHEMA_REPAIR.md](SCHEMA_REPAIR.md)。
+
 ## 查看结果
 
 每次 `forwardExcelBPS` 返回时尝试写一条 INFO 结构化日志，消息为 `bps_request_diagnostics`，版本字段为 `diagnostics_version: 1`。沿用请求上下文的 `request_id`，额外记录 `account_id`；一次客户端请求若发生账号切换，可能有多条记录。输出受现有日志级别和采样设置影响，本批不改日志配置，也不能把采样后的日志条数当作全量请求计数。

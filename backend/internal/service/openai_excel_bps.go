@@ -260,6 +260,12 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		return nil, &excelBPSForwardError{code: code}
 	}
+	schemaCtx, schemaConfigErr := excelBPSSchemaRepairContext(ctx)
+	if schemaConfigErr != nil {
+		return fail(503, "basispoints_schema_repair_settings_invalid", schemaConfigErr.Error())
+	}
+	ctx = schemaCtx
+	defer func() { s.finishExcelBPSSchemaRepair(ctx, forwardResult) }()
 	originalModel := gjson.GetBytes(body, "model").String()
 	model := account.GetMappedModel(originalModel)
 	stream := gjson.GetBytes(body, "stream").Bool()
@@ -560,6 +566,9 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			return fail(503, "basispoints_image_checkpoint_unavailable", "Could not save compacted history safely; retry or run compact manually")
 		}
 		compactOutput = window
+		if stream {
+			basispoints.GuardSchemaRepairCompactedWindow(requestCtx, window)
+		}
 		if cl != nil {
 			requestAcquire = pinnedExcelBPSAcquire(cp, cl)
 		}
@@ -759,7 +768,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		s.UpdateCodexUsageSnapshotFromHeaders(repairCtx, account.ID, repairResp.Header)
 		upstreamBody = correctedBody
-		return basispoints.ReadToolRepairResponse(repairResp.Body)
+		return basispoints.ReadClientToolRepairResponse(repairResp.Body, validation)
 	}, func(repairCtx context.Context) (io.ReadCloser, error) {
 		markPriorityAttemptFailure(repairCtx)
 		repairBody, err := basispoints.RepairRequest(upstreamBody)
