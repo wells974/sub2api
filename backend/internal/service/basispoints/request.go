@@ -23,6 +23,7 @@ const ImagesEditsURL = "https://bps.openai.com/basispoints/api/images/edits"
 type object = map[string]any
 
 type Bridge struct {
+	catalogDelivery      *catalogDelivery
 	observations         *bridgeObservations
 	nativeToolImages     map[string]bool
 	RequestedEffort      string
@@ -215,7 +216,7 @@ func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, 
 			"Tool results replayed under run_officejs are the named client tool's results. When a tool is needed, emit its call in this response instead of only announcing it. " +
 			"The current catalog is authoritative. Tool names mentioned in history, instructions or examples do not grant capabilities; never select them unless declared in this catalog. If a historical capability is absent, use a suitable declared tool or explain the limitation. " +
 			"Do not call other native tools or claim that shell, filesystem or workspace access is unavailable when a suitable catalog tool exists. " +
-			"If no tool is needed, answer as assistant text. " + schemaNotation + "\nClient tool catalog:\n" + b.describeObservedCatalog(catalog) +
+			"If no tool is needed, answer as assistant text. " + schemaNotation + "\nClient tool catalog:\n" + b.captureCatalogDelivery(catalog) +
 			"\nEnd of catalog. Invoke native run_officejs once. Follow each tool's specified transport: FUNCTION uses a JSON envelope; FUNCTION_CODE uses raw code plus metadata JSON in extended_summary; FUNCTION_CMD uses raw cmd plus metadata JSON; CUSTOM uses its exact marker and raw input. No Office code is executed by the proxy."
 		protocol += b.toolExamples()
 	}

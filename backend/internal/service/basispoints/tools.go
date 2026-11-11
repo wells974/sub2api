@@ -541,6 +541,9 @@ func isTool(item object) bool {
 // translateCall accepts only the declared relay transport and a caller-declared tool.
 // It does not evaluate code or dispatch any Excel operation.
 func (b *Bridge) translateCall(native object) (object, error) {
+	if result, handled, err := b.translateCatalogLookup(native); handled {
+		return result, err
+	}
 	name := text(native["name"])
 	if text(native["type"]) == "function_call" && (name == "update_plan" || name == "functions.update_plan") {
 		return b.translateNativePlan(native)
@@ -663,6 +666,9 @@ func (b *Bridge) translateDirectCatalogCall(native object) (object, error) {
 // tool and its envelope. It performs no caching and executes nothing; callers decide
 // how the call replays upstream.
 func (b *Bridge) finishClientToolCall(native object, info tool, envelope object, marked, validateSchema bool) (object, error) {
+	if b.needsCatalogDisclosure(info) {
+		return b.catalogDisclosureCall(native, []string{catalogToolName(info)})
+	}
 	if marked && info.Kind != "custom" {
 		return nil, fmt.Errorf("basispoints raw transport requires a declared custom tool")
 	}

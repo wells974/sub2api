@@ -2,12 +2,11 @@
 
 本批只增加服务端观测。图片限额、上传及去重、Schema 校验规则、工具目录选择、重试、HTTP/SSE 错误和用量计算均保持现状。
 
+后续第二批的预算配置、提前压缩和可选截图裁剪见 [IMAGE_BUDGET.md](IMAGE_BUDGET.md)。
 
+第三批的一次 Schema 纠错与安全边界见 [SCHEMA_REPAIR.md](SCHEMA_REPAIR.md)。
 
-
-第二批配置与图片历史恢复见 [IMAGE_BUDGET.md](IMAGE_BUDGET.md)。
-
-第三批一次 Schema 纠错见 [SCHEMA_REPAIR.md](SCHEMA_REPAIR.md)。
+第四批的按需工具目录与说明回传见 [ON_DEMAND_CATALOG.md](ON_DEMAND_CATALOG.md)。
 
 ## 查看结果
 
@@ -48,7 +47,7 @@ Base64 字节数通过编码字符及 padding 计算，兼容 CR/LF，不额外�
 `catalog` 统计最终准备版本的**有效目录**，包括继承和动态加载的工具；`tool_choice: none` 的未启用工具不计入：
 
 - `tool_count`：实际目录条目数，命名空间中的工具按展开后的条目计数。
-- `prompt_bytes`：原 `describeCatalog` 实际生成文本的 UTF-8 字节数，不包含外围协议说明、示例或历史。
+- `prompt_bytes`：实际目录文本的 UTF-8 字节数，不包含外围协议说明、示例或历史。按需目录关闭时是原 `describeCatalog` 的结果；第四批启用且生效时改为精简目录的实际大小，完整目录大小另见 `bps_tool_catalog.full_prompt_bytes`。
 - `schema_bytes`：有效工具原始 parameters 紧凑 JSON 字节数之和；不含工具描述、名称及 custom format。
 - `max_schema_bytes`：最大的单工具 parameters 紧凑 JSON 字节数。
 

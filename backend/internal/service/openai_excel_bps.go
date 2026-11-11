@@ -260,6 +260,10 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		return nil, &excelBPSForwardError{code: code}
 	}
+	onDemandCatalog, catalogConfigErr := excelBPSOnDemandCatalogEnabled(ctx)
+	if catalogConfigErr != nil {
+		return fail(503, "basispoints_tool_catalog_settings_invalid", catalogConfigErr.Error())
+	}
 	schemaCtx, schemaConfigErr := excelBPSSchemaRepairContext(ctx)
 	if schemaConfigErr != nil {
 		return fail(503, "basispoints_schema_repair_settings_invalid", schemaConfigErr.Error())
@@ -572,6 +576,10 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		if cl != nil {
 			requestAcquire = pinnedExcelBPSAcquire(cp, cl)
 		}
+	}
+	upstreamBody, err = prepareExcelBPSOnDemandCatalog(ctx, bridge, upstreamBody, body, onDemandCatalog)
+	if err != nil {
+		return fail(500, "basispoints_tool_catalog_preparation_failed", err.Error())
 	}
 	SetActualOpenAIUpstreamEndpoint(c, "/basispoints/api/responses")
 	SetOpsUpstreamModel(c, model)
