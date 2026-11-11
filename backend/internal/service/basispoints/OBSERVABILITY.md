@@ -87,3 +87,18 @@ go test ./internal/service/basispoints
 go test ./internal/service -run 'TestExcelBPS|TestNewExcelBPS|TestSetting.*ExcelBPS' -count=1
 go test -race ./internal/service/basispoints -run 'Test(ImageObservations|InlineDecoded|ArgumentObserv|CatalogObserv)' -count=1
 ```
+
+## 四批联合复查
+
+2026-11-12 相对基线 `ecca193c0` 的复查修正了两类交互：关闭开关时恢复原图片策略及合并上传预算；Schema 纠错跳过包含未披露工具的混合批次，避免把说明打印误判为参数合法。并修复原压缩流的取消竞态：先发布取消原因，再关闭上游，防止关闭产生的 `io.ErrClosedPipe` 覆盖 `context.Canceled`。
+
+保留的联合测试：
+
+- `TestExcelBPSExtensionsDisabledMatchLegacyImagePolicy`：60 组策略、图片数量、缓存故障及可信身份组合，与未修改的原策略比较错误文案、分区、上传预算、状态写入。
+- `TestExcelBPSExtensionsTrimCompactCatalogSchemaAndDisable`：四批同时开启，完整走裁剪 → 压缩 → 按需目录 → Schema 纠错，检查原始图片统计、三段用量及关闭后旧检查点回放。
+- `TestSchemaRepairDoesNotCertifyUndisclosedArguments` / `TestSchemaRepairWithDisclosedCatalogRetainsFullValidation`：混合未披露批次不纠错、不部分下发；已披露工具仍完整校验并纠错。
+- `TestCompactedWindowCancellationPrecedesUpstreamClose`：用阻塞关闭桩稳定复现原有取消竞态，确认取消原因不被覆盖，也不等待慢速上游收尾。
+
+另在临时目录分别编译基线与当前桥接包，对 35 组默认请求/响应组合比较准备后的请求体、SSE 字节及错误文本，结果完全一致。此对照覆盖无工具、function/custom、命名空间、`tool_choice:none`、指令/effort、工具历史、合法/非法参数和未知目标，不是所有可能请求的等价性证明。
+
+默认关闭不等于撤销已经产生的有状态转换：已启用过扩展的会话仍需识别其 v2 状态。详情及缓存不可用时的处理见 [IMAGE_BUDGET.md](IMAGE_BUDGET.md)。第一批诊断日志始终存在，但不改变请求语义。

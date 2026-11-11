@@ -29,6 +29,7 @@ SUB2API_BPS_SCHEMA_REPAIR_TIMEOUT_SECONDS=30
 - 每个调用都有明确且唯一的 item ID / call ID；已有工具历史必须完整，不允许复用已完成历史的身份。
 - 所有目标均为当前有效目录中的 function，且使用明确的普通 FUNCTION `run_officejs` 包装。
 - 整批没有未知工具、JSON 不完整、资源预算超限、取消、直接原生调用、custom 或原文传输等不符合条件的部分。
+- 与按需目录同时启用时，整批不含尚未披露说明的工具。说明打印通过不等于实际参数合法；此类混合批次跳过纠错，避免发送错误的 `schema_valid` 反馈。已披露工具仍可正常进入一次纠错。
 - 仍有纠错次数和时间预算。
 
 本批采用保守范围：FUNCTION_CODE、FUNCTION_CMD、CUSTOM，以及代码/命令/补丁/SQL 等工具名或参数字段特征会跳过。具体标识符规则集中在 `schemaRepairPayloadTool` / `schemaRepairPayloadKeys`；例如 `exec`、`shell`、`patch`、`code`、`cmd`、`query`、`content` 等会被排除。这会跳过一部分实际上可以安全修复的工具，以避免通用纠错改写原文载荷。它不是任意执行能力的语义分类器。
@@ -62,7 +63,7 @@ Schema 分支最多提交一次。它与已有纠错回调共享原来的最多�
 
 启用且遇到 Schema 失败时，写一条 `bps_schema_repair` 结构化日志，沿用请求上下文的 request_id。字段包含 `considered`、`attempted`、`outcome`、`skip_reason` 和 `total_corrections`，不记录参数、提示词、原始错误或凭据。它沿用现有日志级别和采样设置。
 
-常见结果：`succeeded`、`failed`、`timed_out`、`canceled`、`skipped`。常见跳过原因包括 `visible_content`、`resource_limit`、`raw_payload_contract`、`raw_payload_transport`、`unsafe_tool_identity`、`incomplete_tool_history` 和 `repair_budget_exhausted`。
+常见结果：`succeeded`、`failed`、`timed_out`、`canceled`、`skipped`。常见跳过原因包括 `visible_content`、`resource_limit`、`raw_payload_contract`、`raw_payload_transport`、`unsafe_tool_identity`、`incomplete_tool_history`、`undisclosed_tool` 和 `repair_budget_exhausted`。
 
 ## 合并上游时的接入点
 

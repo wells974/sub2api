@@ -21,7 +21,8 @@ type excelBudgetOptions struct {
 	TrimOldTools   bool
 }
 
-// Extension settings/state stay separate from upstream settings and policy types.
+// Extension settings/state do not change upstream's DTO or legacy policy. The
+// default path delegates to that implementation, including its error messages.
 type excelImageBudgetSettings struct {
 	ExcelBPSImageRelaySettings
 	BudgetOptions excelBudgetOptions
@@ -29,19 +30,48 @@ type excelImageBudgetSettings struct {
 
 type excelImageBudgetState struct {
 	*excelImagePolicyState
+	extended bool
+}
+
+func (settings excelImageBudgetSettings) extendedBudget() bool {
+	options := settings.BudgetOptions
+	return options.ByteCompact || options.TrimOldTools || (settings.Mode == ExcelBPSImageModeNative && options.NativeTotalMiB != 0 && options.NativeTotalMiB != 32)
 }
 
 func (s *OpenAIGatewayService) prepareExcelImagePolicyWithBudget(ctx context.Context, c *gin.Context, body []byte, settings excelImageBudgetSettings, scope string, trusted bool) (*excelImageBudgetState, error) {
-	state, err := s.prepareExcelImageBudgetPolicy(ctx, c, body, settings, scope, trusted)
+	extended := settings.extendedBudget()
+	if !extended && settings.Enabled && trusted {
+		// Existing v2 checkpoints must remain recognizable after disabling new
+		// options. This optional probe must not create a new cache dependency for
+		// legacy requests: on absence/error, run the unchanged legacy policy.
+		if cache, ok := s.cache.(ExcelBPSImagePolicyCache); ok {
+			previous, err := cache.LoadBPSImageProgress(ctx, scope+"/image-history:v2")
+			extended = err == nil && previous != ""
+		}
+	}
+	var state *excelImagePolicyState
+	var err error
+	if extended {
+		state, err = s.prepareExcelImageBudgetPolicy(ctx, c, body, settings, scope, trusted)
+	} else {
+		state, err = s.prepareExcelImagePolicy(ctx, c, body, settings.ExcelBPSImageRelaySettings, scope, trusted)
+	}
 	if err != nil {
 		return nil, err
 	}
-	return &excelImageBudgetState{excelImagePolicyState: state}, nil
+	return &excelImageBudgetState{excelImagePolicyState: state, extended: extended}, nil
 }
 
 func (p *excelImageBudgetState) reconcileBody(body []byte, settings excelImageBudgetSettings) ([]byte, error) {
 	if len(p.reconciledBody) == 0 {
 		return body, nil
+	}
+	if !p.extended {
+		// Upstream's legacy checkpoint path checks the original aggregate first.
+		budget := excelImageBudget(settings)
+		if err := basispoints.ValidateImageBudget(body, int(budget.MaxImageBytes>>20), int(budget.MaxTotalBytes>>20)); err != nil {
+			return nil, err
+		}
 	}
 	return p.reconciledBody, nil
 }
@@ -200,13 +230,19 @@ func (p *excelImagePolicyState) planImagePartitions(ctx context.Context, split i
 // Raw body and concurrent memory admission still happen before this point.
 func (p *excelImageBudgetState) uploadTotalMiB(settings excelImageBudgetSettings) int {
 	total := int(excelImageBudget(settings).MaxTotalBytes >> 20)
-	if p.split > 0 {
+	if p.extended && p.split > 0 {
 		total *= 2
 	}
 	return total
 }
 
 func (p *excelImageBudgetState) validateContinuation(window []any, settings excelImageBudgetSettings) error {
+	if !p.extended {
+		if basispoints.CountInlineImages(window)+basispoints.CountInlineImages(p.history.Input[p.split:]) > settings.Limits.MaxImages {
+			return fmt.Errorf("Compacted history still exceeds the image limit; reduce new images or compact manually")
+		}
+		return nil
+	}
 	input := append(append([]any{}, window...), p.history.Input[p.split:]...)
 	if err := excelImageBudget(settings).Check(input); err != nil {
 		return fmt.Errorf("Compacted history still exceeds the image budget; reduce new images or compact manually: %w", err)

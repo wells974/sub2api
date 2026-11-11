@@ -97,6 +97,13 @@ func (b *Bridge) schemaRepairBatch(response object) ([]schemaRepairCall, string)
 		if !exists || info.Kind != "function" {
 			return nil, "unsupported_tool_target"
 		}
+		// The delivery gate would translate this call into a documentation print.
+		// That successful translation does not certify the action's arguments, and
+		// its full contract is not yet available to the correcting model. Keep the
+		// mixed batch atomic; do not send misleading schema_valid feedback.
+		if b.needsCatalogDisclosure(info) {
+			return nil, "undisclosed_tool"
+		}
 		arguments, err := envelopeArguments(envelope)
 		if err != nil {
 			return nil, "incomplete_arguments"
