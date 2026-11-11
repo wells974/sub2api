@@ -4533,6 +4533,7 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 	message string,
 	streamStarted bool,
 	countTowardsSLA bool,
+	present ...func(string, string, string) (string, string, string),
 ) {
 	// body-signal compact 心跳可能已把响应头提交为 200：先停心跳（建立
 	// happens-before，接管 ResponseWriter），并升级为流内错误处理。
@@ -4544,6 +4545,9 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 			service.MarkOpsStreamFailure(c, errType, code, message, status)
 		} else {
 			service.MarkOpsStreamError(c, errType, message, status)
+		}
+		if len(present) > 0 {
+			errType, code, message = present[0](errType, code, message)
 		}
 		// /v1/responses 的严格 SDK（Codex CLI）要求终止事件必须属于
 		// response.completed/failed/incomplete/cancelled 集合。
@@ -4574,6 +4578,9 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 		return
 	}
 
+	if len(present) > 0 {
+		errType, code, message = present[0](errType, code, message)
+	}
 	// Normal case: return JSON response with proper status code
 	if code == "" {
 		h.errorResponse(c, status, errType, message)

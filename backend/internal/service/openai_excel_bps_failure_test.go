@@ -85,6 +85,7 @@ func TestExcelBPSFailureQualityObservationDoesNotCoolAccount(t *testing.T) {
 }
 
 func TestExcelBPSFailureClassification(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	for _, tc := range []struct {
 		name, event, code, errorType string
 		explicit, status             int

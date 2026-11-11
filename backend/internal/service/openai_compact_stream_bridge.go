@@ -112,7 +112,7 @@ func writeOpenAICompactSSEFailureMessage(c *gin.Context, statusCode int, errType
 	writeOpenAICompactSSEFailureMessageParam(c, statusCode, errType, message, "")
 }
 
-func writeOpenAICompactSSEFailureMessageParam(c *gin.Context, statusCode int, errType, message, param string) {
+func writeOpenAICompactSSEFailureMessageParam(c *gin.Context, statusCode int, errType, message, param string, present ...func(map[string]any) map[string]any) {
 	if c == nil {
 		return
 	}
@@ -135,6 +135,9 @@ func writeOpenAICompactSSEFailureMessageParam(c *gin.Context, statusCode int, er
 				}
 				if param != "" {
 					errorBody["param"] = param
+				}
+				if len(present) > 0 {
+					return present[0](errorBody)
 				}
 				return errorBody
 			}(),

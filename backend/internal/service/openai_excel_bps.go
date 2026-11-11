@@ -246,7 +246,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			if len(param) > 0 {
 				failureParam = param[0]
 			}
-			writeOpenAICompactSSEFailureMessageParam(c, status, code, message, failureParam)
+			writeExcelBPSCompactFailure(c, status, code, message, failureParam)
 		} else {
 			errorType := "invalid_request_error"
 			if status >= 500 {
@@ -916,7 +916,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			}
 		}
 		if stream {
-			if _, err = c.Writer.WriteString(line + "\n"); err != nil {
+			if _, err = c.Writer.WriteString(presentExcelBPSErrorLine(c, line) + "\n"); err != nil {
 				result.ClientDisconnect = true
 				if isExcelBPSClientCancellation(c, c.Request.Context().Err()) {
 					MarkOpsClientCancellation(c, stream)
@@ -949,10 +949,10 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		s.rateLimitService.observeQualityStatus(ctx, account, http.StatusBadGateway)
 		MarkResponseCommitted(c)
 		if stream {
-			_, _ = c.Writer.WriteString("event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"code\":\"basispoints_stream_incomplete\",\"message\":\"Upstream stream ended before completion\"}}}\n\n")
+			writeExcelBPSIncompleteStream(c)
 			c.Writer.Flush()
 		} else {
-			c.JSON(502, gin.H{"error": gin.H{"type": "server_error", "code": "basispoints_stream_incomplete", "message": "Excel BPS stream ended before completion"}})
+			c.JSON(502, gin.H{"error": PresentExcelBPSError(c, 502, gin.H{"type": "server_error", "code": "basispoints_stream_incomplete", "message": "Excel BPS stream ended before completion"})})
 		}
 		return result, fmt.Errorf("excel BPS stream incomplete")
 	}
@@ -962,9 +962,9 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	if !stream {
 		if upstreamFailure != nil {
 			if StopOpenAICompactSSEKeepaliveCommitted(c) {
-				writeOpenAICompactSSEFailureMessage(c, upstreamFailure.Status, upstreamFailure.Code, upstreamFailure.Message)
+				writeExcelBPSCompactFailure(c, upstreamFailure.Status, upstreamFailure.Code, upstreamFailure.Message)
 			} else {
-				c.JSON(upstreamFailure.Status, gin.H{"error": upstreamFailure.Details()})
+				c.JSON(upstreamFailure.Status, gin.H{"error": presentExcelBPSFailureDetails(c, upstreamFailure.Status, gin.H(upstreamFailure.Details()))})
 			}
 		} else if terminal != "response.completed" {
 			message := "Excel BPS did not complete the response"
@@ -974,9 +974,9 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				message = bridgeFailure.Message
 			}
 			if StopOpenAICompactSSEKeepaliveCommitted(c) {
-				writeOpenAICompactSSEFailureMessage(c, http.StatusBadGateway, "basispoints_protocol_error", message)
+				writeExcelBPSCompactFailure(c, http.StatusBadGateway, "basispoints_protocol_error", message)
 			} else {
-				c.JSON(http.StatusBadGateway, gin.H{"error": detail})
+				c.JSON(http.StatusBadGateway, gin.H{"error": presentExcelBPSFailureDetails(c, http.StatusBadGateway, gin.H(detail))})
 			}
 		} else {
 			c.Data(200, "application/json", completed)

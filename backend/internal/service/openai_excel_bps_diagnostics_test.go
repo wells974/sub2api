@@ -18,6 +18,7 @@ import (
 )
 
 func TestExcelBPSRequestDiagnosticsIntegration(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	gin.SetMode(gin.TestMode)
 	for _, stream := range []bool{false, true} {
 		for _, scenario := range []string{"success", "arguments", "compile", "image"} {

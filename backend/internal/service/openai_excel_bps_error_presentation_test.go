@@ -150,28 +150,7 @@ func TestExcelBPSPublicImagesForward(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "PRIVATE_PROVIDER")
 }
 
-func TestExcelBPSPublicErrorsLeaveAcceptedStreamsForNextPhase(t *testing.T) {
-	// Stage one must not modify the internal error event that bridge parsing,
-	// billing and the second-stage SSE presentation will consume.
-	var legacy string
-	for _, mode := range []string{"legacy", "neutral"} {
-		t.Setenv(excelBPSErrorPresentationEnv, mode)
-		upstream := &httpUpstreamRecorder{resp: bpsCompletionResponse(200, "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_fixed\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\"}}}\n\n")}
-		svc := openAIClientToolsTestService(upstream)
-		rec := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(rec)
-		c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
-		_, err := svc.Forward(context.Background(), c, excelAccount(), []byte(`{"model":"gpt-6-astra","stream":true,"input":"hello"}`))
-		require.Error(t, err)
-		if mode == "legacy" {
-			legacy = rec.Body.String()
-		} else {
-			require.Equal(t, legacy, rec.Body.String())
-		}
-	}
-}
-
-func TestExcelBPSPublicErrorCompactedKeepaliveStaysLegacy(t *testing.T) {
+func TestExcelBPSPublicErrorCompactedKeepalive(t *testing.T) {
 	t.Setenv(excelBPSErrorPresentationEnv, "")
 	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 524, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}}
 	svc := openAIClientToolsTestService(upstream)
@@ -186,7 +165,8 @@ func TestExcelBPSPublicErrorCompactedKeepaliveStaysLegacy(t *testing.T) {
 	_, err := svc.Forward(context.Background(), c, excelAccount(), []byte(`{"model":"gpt-6-astra","input":"hello"}`))
 	require.Error(t, err)
 	require.Equal(t, 200, rec.Code)
-	require.Contains(t, rec.Body.String(), "basispoints_upstream_error")
+	require.NotContains(t, rec.Body.String(), "basispoints")
+	require.Contains(t, rec.Body.String(), "request_failed")
 	require.Equal(t, 1, strings.Count(rec.Body.String(), "event: response.failed"))
 }
 
