@@ -32,6 +32,7 @@ func RegisterGatewayRoutes(
 	compositeResolver *service.CompositeRouteResolver,
 	cfg *config.Config,
 ) {
+	apiKeyAuth = middleware.ModelListingClientPolicy(settingService, apiKeyAuth)
 	h.Gateway.ConfigureAPIKeyGroupRouting(apiKeyService)
 	// BPS fetches these capability URLs without the client's API key. There is
 	// no public upload route; only authenticated BPS requests can create them.
@@ -439,7 +440,15 @@ func RegisterGatewayRoutes(
 		gemini.GET("/models", h.Gateway.GeminiV1BetaListModels)
 		gemini.GET("/models/:model", h.Gateway.GeminiV1BetaGetModel)
 		// Gin treats ":" as a param marker, but Gemini uses "{model}:{action}" in the same segment.
-		gemini.POST("/models/*modelAction", h.Gateway.GeminiV1BetaModels)
+		// 非 Gemini 分组不打上游 /v1beta/models，而是转成 Chat Completions 后按账号实际协议转发。
+		gemini.POST("/models/*modelAction", func(c *gin.Context) {
+			if handler.GeminiInboundUsesNativeUpstream(c) {
+				h.Gateway.GeminiV1BetaModels(c)
+				return
+			}
+			chat := handler.SelectGeminiChatCompletionsHandler(getGroupPlatform(c), h.OpenAIGateway, h.Gateway)
+			handler.ServeGeminiViaChatCompletions(c, chat)
+		})
 		// 显式上下文缓存：网关自管资源 ID 与账号绑定，list/get 只读本地记录。
 		gemini.POST("/cachedContents", h.Gateway.GeminiCachedContentsCreate)
 		gemini.GET("/cachedContents", h.Gateway.GeminiCachedContentsList)

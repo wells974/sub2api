@@ -1,4 +1,8 @@
 import { apiClient } from '@/api/client'
+import { createPinia, setActivePinia } from 'pinia'
+import { useNewFeatureNoticeStore } from '@/stores/newFeatureNotices'
+import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
+import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import type { InternalAxiosRequestConfig } from 'axios'
 import { getAutoConfig } from '@/api/admin/autoConfig'
 import { defaultExcelBPSDefaults } from '@/utils/excelBPSDefaults'
@@ -35,6 +39,7 @@ vi.mock('@/stores/app', () => ({
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
+    user: { id: 41, role: 'admin' },
     get isSimpleMode() {
       return authIsSimpleMode.value
     }
@@ -344,6 +349,33 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
 }
 
 describe('EditAccountModal', () => {
+  it.each(['active', 'error'])('omits unchanged OpenAI OAuth status %s from an unrelated edit', async (status) => {
+    const account = { ...buildOpenAIOAuthParentAccount(), status }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await flushPromises()
+    await wrapper.get('[data-tour="edit-account-form-name"]').setValue('Updated name')
+    await wrapper.get('#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock).toHaveBeenCalledWith(account.id, expect.objectContaining({ name: 'Updated name' }))
+    expect(updateAccountMock.mock.calls[0]?.[1]).not.toHaveProperty('status')
+  })
+
+  it('sends an explicitly changed OpenAI OAuth status', async () => {
+    const account = buildOpenAIOAuthParentAccount()
+    updateAccountMock.mockReset().mockResolvedValue({ ...account, status: 'inactive' })
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await flushPromises()
+    const statusSelect = wrapper.findAll('select').find((select) => select.find('option[value="inactive"]').exists())
+    expect(statusSelect).toBeDefined()
+    await statusSelect!.setValue('inactive')
+    await wrapper.get('#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock).toHaveBeenCalledWith(account.id, expect.objectContaining({ status: 'inactive' }))
+  })
+
   it('round-trips and clears API-key image grants without affecting other extra fields', async () => {
     const account = buildAccount()
     account.extra = { extra_image_models: ['my-nai'], extra_image_model_prefixes: ['nai-diffusion-'], unrelated: 'preserve' }
@@ -3285,3 +3317,38 @@ describe('OpenAI connection account type boundary in the actual editor', () => {
     expect(wrapper.get('[data-testid="anthropic-mimic-claude-code-toggle"]').classes()).not.toContain('bg-primary-600')
   })
 })
+
+
+describe('initial OAuth model scope ownership', () => {
+ it.each([false, true])('shows the saved scope and only releases it on explicit takeover (%s)', async release => {
+  setActivePinia(createPinia())
+  const account = { ...buildAccount(), type: 'oauth', credentials: { model_mapping: {}, model_mapping_mode: 'whitelist', oauth_initial_selected_models: [] } }
+  const wrapper = mountModal(account); await flushPromises()
+  expect(wrapper.get('[data-testid="initial-model-scope-snapshot"]').text()).toContain('autoConfig.selection.accountHint')
+  if (release) await wrapper.get('[data-testid="release-initial-model-selection"]').setValue(true)
+  await wrapper.get('#edit-account-form').trigger('submit.prevent'); await flushPromises()
+  expect(updateAccountMock).toHaveBeenCalledWith(1, expect.objectContaining({ credentials: expect.objectContaining({ oauth_initial_selected_models: release ? null : [] }) }))
+  wrapper.unmount()
+ })
+})
+
+ it('shares the model-selection announcement with the account scope takeover control', async () => {
+  localStorage.clear(); const pinia = createPinia(); setActivePinia(pinia)
+  const notices = useNewFeatureNoticeStore(pinia)
+  notices.dismiss(41, NEW_FEATURE_NOTICES.protocolFeatureSwitches)
+  const account = { ...buildAccount(), type: 'oauth', credentials: { model_mapping: {}, model_mapping_mode: 'whitelist', oauth_initial_selected_models: [] } }
+  const wrapper = mountModal(account); await flushPromises()
+  const scope = wrapper.get('[data-testid="initial-model-scope-snapshot"]')
+  const announcement = wrapper.findAllComponents(NewFeatureBadge).find(b => b.props('noticeId') === NEW_FEATURE_NOTICES.oauthInitialModelSelection)!
+  expect(announcement.props('userId')).toBe(41)
+  expect(scope.find('[data-testid="new-feature-badge"]').exists()).toBe(true)
+  const sibling = mount(NewFeatureBadge, { props: { noticeId: NEW_FEATURE_NOTICES.oauthInitialModelSelection, userId: 41 }, global: { plugins: [pinia] } })
+  await announcement.get('button').trigger('click')
+  expect(sibling.find('button').exists()).toBe(false)
+  expect(wrapper.get<HTMLInputElement>('[data-testid="release-initial-model-selection"]').element.checked).toBe(false)
+  wrapper.unmount(); sibling.unmount(); setActivePinia(createPinia())
+  const reloaded = mountModal(account); await flushPromises()
+  expect(reloaded.get('[data-testid="initial-model-scope-snapshot"]').find('[data-testid="new-feature-badge"]').exists()).toBe(false)
+  expect(useNewFeatureNoticeStore().isDismissed(41, NEW_FEATURE_NOTICES.protocolFeatureSwitches)).toBe(true)
+  reloaded.unmount()
+ })

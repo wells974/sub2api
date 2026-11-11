@@ -643,7 +643,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		apiURL = strings.TrimSuffix(normalizedBaseURL, "/") + "/v1/messages?beta=true"
+		apiURL = buildAnthropicMessagesURL(normalizedBaseURL)
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
@@ -1152,6 +1152,16 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		aiRecoveryProbe, _ := ctx.Value(aiOpsRecoveryProbeKey{}).(bool)
 		if resp.StatusCode == http.StatusTooManyRequests && !aiRecoveryProbe {
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
+		}
+		// Only an actual own-credential OAuth response can count toward rule
+		// cleanup. BPS, SIWC, borrowed credentials and acquisition failures do not.
+		if resp.StatusCode == http.StatusUnauthorized && isOAuth && credentialAccount.ID == account.ID && authToken != "" && req.Header.Get("Authorization") == "Bearer "+authToken && !IsAstraSourceAcquisition(ctx) && !aiRecoveryProbe {
+			if options, ok := pelicanTestOptionsFromContext(ctx); ok && options.directOAuth401 != nil && options.nativeOAuthTransport != nil && *options.nativeOAuthTransport {
+				*options.directOAuth401 = true
+				if options.directOAuthRevoked401 != nil {
+					*options.directOAuthRevoked401 = qualityOAuth401RevokedCode(body)
+				}
+			}
 		}
 		// 401 Unauthorized: 标记账号为永久错误
 		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil && !IsAstraSourceAcquisition(ctx) && !aiRecoveryProbe {
@@ -3442,11 +3452,11 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: modelID})
 
+	// GPT Image models return base64 images by default and reject response_format.
 	payload := map[string]any{
-		"model":           modelID,
-		"prompt":          prompt,
-		"n":               1,
-		"response_format": "b64_json",
+		"model":  modelID,
+		"prompt": prompt,
+		"n":      1,
 	}
 	payloadBytes, _ := json.Marshal(payload)
 

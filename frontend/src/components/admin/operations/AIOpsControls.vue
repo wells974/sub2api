@@ -3,20 +3,22 @@
     <header class="flex flex-wrap items-start justify-between gap-3">
       <div>
         <div class="flex flex-wrap items-center gap-2"><h2 class="text-xl font-semibold">{{ t('aiOpsControl.title') }}</h2><NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.aiOpsCodex" :user-id="auth.user?.id" /></div>
-        <p class="mt-2 max-w-4xl text-sm leading-6 text-gray-500">{{ t('aiOpsControl.description') }}</p>
+        <p class="mt-2 max-w-4xl text-sm leading-6 text-gray-500">{{ t(compact ? 'aiOpsControl.compactDescription' : 'aiOpsControl.description') }}</p>
       </div>
       <div class="flex flex-wrap gap-2">
         <button type="button" class="btn btn-secondary" :disabled="busy || halting || loading" data-testid="ai-control-refresh" @click="load">{{ t('aiOpsControl.refresh') }}</button>
-        <button type="button" class="btn btn-danger" :disabled="halting" data-testid="ai-control-halt" @click="halt">{{ t(halting ? 'aiOpsControl.haltPending' : 'aiOpsControl.halt') }}</button>
+        <button v-if="!compactReadOnly" type="button" class="btn btn-danger" :disabled="halting" data-testid="ai-control-halt" @click="halt">{{ t(halting ? 'aiOpsControl.haltPending' : 'aiOpsControl.halt') }}</button>
       </div>
     </header>
-    <p class="text-xs leading-5 text-gray-500">{{ t('aiOpsControl.haltHint') }}</p>
+    <p v-if="!compactReadOnly" class="text-xs leading-5 text-gray-500">{{ t('aiOpsControl.haltHint') }}</p>
     <p v-if="error" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">{{ error }}</p>
     <p v-if="notice" role="status" class="text-sm text-emerald-700 dark:text-emerald-300">{{ notice }}</p>
     <p v-if="loading && !draft" class="text-sm text-gray-500">{{ t('aiOpsControl.loading') }}</p>
-    <p v-if="policy && !policy.control_enabled" class="rounded-lg bg-gray-50 p-3 text-sm text-gray-600 dark:bg-dark-800 dark:text-gray-300" data-testid="ai-control-disabled">{{ t('aiOpsControl.deploymentDisabled') }}</p>
-    <p v-if="policy?.halted || haltRequested" role="status" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-200" data-testid="ai-control-halted">{{ t('aiOpsControl.halted') }}</p>
+    <p v-if="policy && !policy.control_enabled" class="rounded-lg bg-gray-50 p-3 text-sm text-gray-600 dark:bg-dark-800 dark:text-gray-300" data-testid="ai-control-disabled">{{ t(compact ? 'aiOpsControl.readOnly' : 'aiOpsControl.deploymentDisabled') }}</p>
+    <p v-if="!compactReadOnly && (policy?.halted || haltRequested)" role="status" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-200" data-testid="ai-control-halted">{{ t('aiOpsControl.halted') }}</p>
 
+    <component :is="compact ? 'details' : 'div'" class="space-y-5" :class="{ 'card p-5': compact }" data-testid="ai-control-advanced">
+      <summary v-if="compact" class="cursor-pointer font-semibold">{{ t('aiOpsControl.advancedDetails') }}</summary>
     <details v-if="draft" class="card" :open="policy?.mode === 'disabled'">
       <summary class="cursor-pointer p-5 font-semibold">{{ t('aiOpsControl.policy') }} · {{ t('aiOpsControl.revision', { revision: policy?.revision }) }}</summary>
       <form class="space-y-5 border-t border-gray-100 p-5 dark:border-dark-700" @submit.prevent="savePolicy">
@@ -63,7 +65,7 @@
     </details>
 
     <section v-if="policy" class="card space-y-4 p-5">
-      <h3 class="font-semibold">{{ t('aiOpsControl.preview') }}</h3>
+      <h3 class="font-semibold">{{ t('aiOpsControl.preview') }} <NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.aiOpsProposalCancel" :user-id="auth.user?.id" /></h3>
       <p class="text-sm leading-6 text-gray-500">{{ t('aiOpsControl.chooseHint') }}</p>
       <p v-if="!recommendations.length" class="text-sm text-gray-500">{{ t('aiOpsControl.noRecommendations') }}</p>
       <div v-for="item in recommendations" :key="item.index" class="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
@@ -86,10 +88,14 @@
         <p class="whitespace-pre-wrap break-words text-sm"><strong>{{ t('aiOpsControl.reason') }}：</strong>{{ frozenReason }}</p>
         <p class="break-words text-xs text-gray-500">{{ t('aiOpsControl.evidenceRefs') }}：{{ frozenEvidenceIds.join(', ') || '—' }}</p>
         <details><summary class="cursor-pointer text-xs text-gray-500">{{ t('aiOpsControl.digest') }}</summary><code class="mt-2 block break-all text-xs">{{ frozen.digest }}</code></details>
-        <div v-if="frozen.status !== 'ready' || frozen.blocked_reasons.length" role="alert" class="space-y-1 text-sm text-amber-700 dark:text-amber-300" data-testid="ai-control-blocked"><strong>{{ t('aiOpsControl.blocked') }}</strong><p v-for="reason in frozen.blocked_reasons" :key="reason">{{ reasonLabel(reason) }}</p><p v-if="!frozen.blocked_reasons.length">{{ frozen.status }}</p></div>
+        <div v-if="frozen.status !== 'ready' || frozen.blocked_reasons.length" role="alert" class="space-y-1 text-sm text-amber-700 dark:text-amber-300" data-testid="ai-control-blocked"><strong>{{ t('aiOpsControl.blocked') }}</strong><p v-for="reason in frozen.blocked_reasons" :key="reason">{{ reasonLabel(reason) }}</p><p v-if="!frozen.blocked_reasons.length">{{ frozen.status === 'cancelled' ? t('aiOpsControl.proposalCancelled') : frozen.status }}</p></div>
         <p v-if="previewExpired" role="alert" class="text-sm text-amber-700 dark:text-amber-300">{{ t('aiOpsControl.expired') }}</p>
         <label class="flex items-start gap-2 text-sm"><input v-model="applyConsent" type="checkbox" class="mt-0.5" :disabled="!previewReady || busy || halting" data-testid="ai-control-apply-consent" /><span>{{ t('aiOpsControl.applyConsent') }}</span></label>
-        <button type="button" class="btn btn-primary" :disabled="!canApply" data-testid="ai-control-apply" @click="apply">{{ t('aiOpsControl.apply') }}</button>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" class="btn btn-primary" :disabled="!canApply" data-testid="ai-control-apply" @click="apply">{{ t('aiOpsControl.apply') }}</button>
+          <button v-if="frozen.status === 'ready' || frozen.status === 'blocked'" type="button" class="btn btn-secondary" :disabled="!canCancel" data-testid="ai-control-cancel" @click="cancelProposal">{{ t('aiOpsControl.cancelProposal') }}</button>
+        </div>
+        <p class="text-xs text-gray-500">{{ t('aiOpsControl.cancelHint') }}</p>
       </article>
     </section>
 
@@ -107,6 +113,7 @@
         <button v-if="rollbackCandidate(action)" type="button" class="btn btn-secondary btn-sm" :disabled="busy || halting || loading || needsRefresh || !policy?.control_enabled" :data-testid="`ai-control-rollback-${action.id}`" @click="rollbackTarget = action; rollbackConsent = false">{{ t('aiOpsControl.rollback') }}</button>
       </article>
     </section>
+    </component>
 
     <BaseDialog :show="!!rollbackTarget" :title="t('aiOpsControl.rollbackTitle')" width="normal" @close="closeRollback">
       <div v-if="rollbackTarget" class="space-y-4">
@@ -131,10 +138,11 @@ import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
 import AIOpsRecoveryProbes from './AIOpsRecoveryProbes.vue'
 import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 
-const props = defineProps<{ run: AIOpsRun | null }>()
+const props = withDefaults(defineProps<{ run: AIOpsRun | null; compact?: boolean }>(), { compact: false })
 const { t, te, locale } = useI18n()
 const auth = useAuthStore()
 const policy = ref<AIOpsPolicy | null>(null)
+const compactReadOnly = computed(() => props.compact && policy.value?.control_enabled === false)
 const draft = ref<AIOpsPolicy | null>(null)
 const actions = ref<AIOpsActionRecord[]>([])
 const total = ref(0)
@@ -172,6 +180,7 @@ const canPreview = computed(() => auth.isAdmin && policy.value?.control_enabled 
 const previewExpired = computed(() => !!frozen.value && (!Number.isFinite(Date.parse(frozen.value.expires_at)) || Date.parse(frozen.value.expires_at) <= clock.value))
 const previewReady = computed(() => !!frozen.value && frozen.value.status === 'ready' && !frozen.value.blocked_reasons.length && frozen.value.policy_revision === policy.value?.revision && frozen.value.run_id === props.run?.id && !!frozen.value.digest && !previewExpired.value)
 const frozenAfterValue = computed(() => frozen.value ? changeValue(frozen.value.action, frozen.value.action === 'pause_account' ? 1 : frozen.value.action === 'resume_account' ? 0 : frozen.value.proposed_value) : '—')
+const canCancel = computed(() => auth.isAdmin && !!frozen.value?.digest && ['ready', 'blocked'].includes(frozen.value.status) && !busy.value && !halting.value && !loading.value && !needsRefresh.value)
 const canApply = computed(() => canPreview.value && previewReady.value && applyConsent.value)
 
 let alive = true, readGeneration = 0, previewGeneration = 0, mutationGeneration = 0
@@ -291,6 +300,20 @@ async function apply(): Promise<void> {
     rememberAction(action)
     invalidatePreview()
     notice.value = action.status === 'conflict' ? t('aiOpsControl.conflict') : t('aiOpsControl.submitted')
+  } catch (value) { if (alive && generation === mutationGeneration) operationError(value) }
+  finally { if (alive && generation === mutationGeneration) busy.value = false }
+}
+
+async function cancelProposal(): Promise<void> {
+  if (!canCancel.value || !frozen.value) return
+  const proposal = frozen.value, generation = ++mutationGeneration
+  mutationController = new AbortController()
+  busy.value = true; error.value = ''; notice.value = ''; applyConsent.value = false
+  try {
+    const cancelled = await aiOpsControlAPI.cancel(proposal.id, proposal.digest, mutationController.signal)
+    if (!alive || generation !== mutationGeneration) return
+    if (frozen.value?.id === proposal.id) frozen.value = cancelled
+    notice.value = t('aiOpsControl.proposalCancelled')
   } catch (value) { if (alive && generation === mutationGeneration) operationError(value) }
   finally { if (alive && generation === mutationGeneration) busy.value = false }
 }

@@ -67,7 +67,7 @@ func (r *accountRepository) RecordConcurrencyResult(ctx context.Context, event s
 	if err = json.Unmarshal(extra, &state); err != nil {
 		return err
 	}
-	if state.Concurrency != 0 && state.Concurrency != current {
+	if !state.DegradationHold && state.Concurrency != 0 && state.Concurrency != current {
 		// A manual change starts a fresh cycle; old in-flight samples cannot fill it.
 		state = service.AutoConfigConcurrencyState{Revision: actual.Revision, Concurrency: current, PausedUntil: time.Now().UTC().Add(time.Duration(actual.CooldownSeconds) * time.Second)}
 	}

@@ -92,7 +92,14 @@ func isOpenAIAccount(account *Account) bool {
 
 // handleOpenAIAccountUpstreamError expects canonicalModel to be the model used
 // for scheduling after applying account mapping exactly once.
-func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, canonicalModel ...string) bool {
+func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, canonicalModel ...string) (shouldDisable bool) {
+	if s != nil {
+		var disabledOn429 bool
+		ctx, disabledOn429 = s.rateLimitService.maybeDisableOpenAISchedulingOn429(ctx, account, statusCode, headers)
+		if disabledOn429 {
+			defer func() { shouldDisable = true }()
+		}
+	}
 	if isOpenAIUpstreamSessionBlocked(responseBody) {
 		return false
 	}
@@ -112,6 +119,9 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	// SIWC has independent credentials and limits. Never revoke or relogin the primary Codex grant on its errors.
 	if account.IsSIWCEnabled() && account.AuthConnectionID == "" {
 		return false
+	}
+	if s != nil {
+		ctx = s.rateLimitService.maybeRotateOpenAITOTPOn429(ctx, account, statusCode)
 	}
 	// Observe other HTTP responses before request/model-scoped policies return.
 	// The shared handler below skips this reset to keep one observation per response.
@@ -203,7 +213,7 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	if s.rateLimitService == nil {
 		return false
 	}
-	shouldDisable := s.rateLimitService.handleUpstreamErrorAfterStreakReset(stateCtx, account, statusCode, headers, responseBody)
+	shouldDisable = s.rateLimitService.handleUpstreamErrorAfterStreakReset(stateCtx, account, statusCode, headers, responseBody)
 	tempModel := tempUnschedulableModel(stateCtx, nil)
 	modelTempMatched := tempModel != "" && tempUnschedRulesApply(account, statusCode, responseBody, tempModel) &&
 		len(matchTempUnschedulableRules(account, statusCode, responseBody)) > 0

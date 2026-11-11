@@ -97,13 +97,26 @@ func ProvideRouter(
 		service.SetWebSearchManager(websearch.NewManager(configs, redisClient))
 	})
 
-	manager, err := serverless.New(serverless.Runtime{ID: cfg.Runtime.ServerlessID, Endpoint: cfg.Runtime.ServerlessEndpoint, Region: cfg.Runtime.ServerlessRegion, Secret: cfg.Runtime.ServerlessSecret, Gateway: cfg.Runtime.Role == config.RuntimeRoleGateway, Version: settingService.ServerlessVersion()}, redisClient, settingService.ServerlessStore())
+	manager, err := serverless.New(serverless.Runtime{
+		ID: cfg.Runtime.ServerlessID, Endpoint: cfg.Runtime.ServerlessEndpoint,
+		Region: cfg.Runtime.ServerlessRegion, Secret: cfg.Runtime.ServerlessSecret,
+		Gateway: cfg.Runtime.Role == config.RuntimeRoleGateway, Version: settingService.ServerlessVersion(),
+		ResponseHeaderTimeout: time.Duration(cfg.Runtime.ServerlessResponseHeaderTimeout) * time.Second,
+	}, redisClient, settingService.ServerlessStore())
 	if err != nil {
 		panic(err)
 	}
 	settingService.Serverless = manager
 	settingService.IPRisk = iprisk.New(settingService.IPRiskStore(), redisClient, serverless.NewGeoJSResolver(redisClient), strings.EqualFold(os.Getenv("IP_RISK_DISABLED"), "true"))
 	settingService.IPRisk.Start()
+	if cfg.Runtime.Role != config.RuntimeRoleGateway && handlers.Admin != nil && handlers.Admin.Setting != nil {
+		stop, err := handlers.Admin.Setting.StartKeyRisk(cfg.Database.DSN())
+		if err != nil {
+			slog.Warn("key risk initialization failed")
+		} else {
+			lifecycle.onDrain = append(lifecycle.onDrain, stop)
+		}
+	}
 	if handlers.Admin != nil && handlers.Admin.Setting != nil {
 		if handlers.Admin.PromptAudit != nil {
 			handlers.Admin.Setting.ConfigureIPAudit(handlers.Admin.AuditLog, handlers.Admin.PromptAudit.IPAuditPenaltySummary, handlers.Admin.PromptAudit.ReleaseIPAuditPenalty)
