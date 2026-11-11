@@ -49,6 +49,7 @@ func TestExcelBPS403GroupTarget(t *testing.T) {
 }
 
 func TestExcelBPS403GroupActionTrigger(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	for _, tc := range []struct {
 		name                              string
 		status                            int

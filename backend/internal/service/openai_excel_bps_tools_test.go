@@ -20,6 +20,7 @@ import (
 const excelBPSToolPolicyResponse = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_policy\",\"status\":\"completed\",\"model\":\"gpt-6-astra\",\"output\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}\n\n"
 
 func TestExcelBPSToolFallbackPolicy(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	cases := []struct {
 		name         string
 		tool         map[string]any

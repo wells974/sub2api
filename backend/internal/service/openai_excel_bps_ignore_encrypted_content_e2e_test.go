@@ -18,6 +18,7 @@ import (
 // Replays an old Codex multi-agent history through the real Forward, protocol
 // and SSE pipeline. Only the upstream endpoint and the account are local.
 func TestExcelBPSIgnoreEncryptedContentHTTPFlow(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	gin.SetMode(gin.TestMode)
 	t.Setenv("DATA_DIR", t.TempDir())
 	const history = `[

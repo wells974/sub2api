@@ -212,6 +212,7 @@ func TestOpenAIResponsesExcelBPSImageBusySwitchesToOtherAccount(t *testing.T) {
 }
 
 func TestOpenAIResponsesExcelBPSImageBusyOnEveryAccountReturns503(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	gin.SetMode(gin.TestMode)
 	t.Setenv("DATA_DIR", t.TempDir())
 	for _, loadBatch := range []bool{false, true} {

@@ -11,6 +11,7 @@ import (
 )
 
 func TestExcelBPSRejectsNewEncryptedAssignmentBeforeAnySubmission(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	for _, ignore := range []bool{false, true} {
 		for _, top := range []bool{false, true} {
 			upstream := &httpUpstreamRecorder{}

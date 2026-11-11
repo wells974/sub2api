@@ -301,6 +301,7 @@ func TestExcelBPSFailoverRealHTTPTransport(t *testing.T) {
 }
 
 func TestExcelBPSTransportAndStreamFailureAreServerErrors(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	for _, streamFailure := range []bool{false, true} {
 		t.Run(fmt.Sprint(streamFailure), func(t *testing.T) {
 			upstream := &httpUpstreamRecorder{err: io.EOF}

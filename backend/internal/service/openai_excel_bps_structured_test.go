@@ -91,6 +91,7 @@ func TestExcelBPSStructuredOutputForwardContract(t *testing.T) {
 }
 
 func TestExcelBPSStructuredOutputDoesNotOverrideModelAccess(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	for _, model := range []string{"gpt-6-luna", "gpt-6-sol"} {
 		t.Run(model, func(t *testing.T) {
 			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusForbidden, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("{\"error\":{\"code\":\"basispoints_model_access_changed\"}}"))}}

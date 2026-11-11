@@ -231,7 +231,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSImages(ctx context.Context, c *gin
 			errorType = "server_error"
 		}
 		upErr := &OpenAIImagesUpstreamError{StatusCode: status, ErrorType: errorType, Code: code, Message: message}
-		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
+		writeExcelBPSImagesError(c, upErr)
 		return nil, false, upErr
 	}
 	var body []byte
@@ -348,7 +348,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSImages(ctx context.Context, c *gin
 		}
 		var upErr *OpenAIImagesUpstreamError
 		if errors.As(err, &upErr) {
-			writeOpenAIImagesUpstreamErrorResponse(c, upErr)
+			writeExcelBPSImagesError(c, upErr)
 		}
 		return nil, false, err
 	}

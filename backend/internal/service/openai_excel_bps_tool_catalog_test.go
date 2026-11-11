@@ -119,6 +119,7 @@ func TestExcelBPSOnDemandCatalogRoundTrip(t *testing.T) {
 }
 
 func TestExcelBPSOnDemandCatalogDefaultAndInvalidConfig(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	for _, setting := range []string{"", "false", "invalid"} {
 		t.Run(setting, func(t *testing.T) {
 			t.Setenv("SUB2API_BPS_ON_DEMAND_CATALOG_ENABLED", setting)

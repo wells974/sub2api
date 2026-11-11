@@ -31,6 +31,7 @@ func (u *excelBPSImageHTTPUpstream) Do(req *http.Request, _ string, _ int64, _ i
 }
 
 func TestExcelBPSImagesHTTPFlow(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	gin.SetMode(gin.TestMode)
 	t.Setenv("DATA_DIR", t.TempDir())
 	body, pixels := nativeGatewayBody(t)

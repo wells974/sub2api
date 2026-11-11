@@ -256,7 +256,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			if len(param) > 0 && param[0] != "" {
 				errorBody["param"] = param[0]
 			}
-			c.JSON(status, gin.H{"error": errorBody})
+			c.JSON(status, gin.H{"error": PresentExcelBPSError(c, status, errorBody)})
 		}
 		return nil, &excelBPSForwardError{code: code}
 	}

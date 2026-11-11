@@ -350,6 +350,7 @@ func TestExcelBPSImages429CoolsBPSAndFailsOver(t *testing.T) {
 }
 
 func TestExcelBPSImagesFinalErrorsAreNotReplayed(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError, http.StatusBadGateway} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			var urls []string

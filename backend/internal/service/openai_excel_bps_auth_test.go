@@ -124,6 +124,7 @@ func TestExcelBPS401RespectsAPIKeyPolicies(t *testing.T) {
 }
 
 func TestExcelBPS401AppliesAuthenticationPolicy(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	for _, route := range []string{"responses", "attachment", "tool correction", "unknown tool regeneration"} {
 		for _, stream := range []bool{false, true} {
 			for _, tc := range []struct {

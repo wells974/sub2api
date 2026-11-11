@@ -26,6 +26,7 @@ func (r *excelBPSAutoDisableRepo) DisableExcelBPSOn403(ctx context.Context, acco
 }
 
 func TestExcelBPSAutoDisableOn403(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	for _, tc := range []struct {
 		name       string
 		status     int

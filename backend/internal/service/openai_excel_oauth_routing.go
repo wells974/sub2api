@@ -28,9 +28,9 @@ func (s *OpenAIGatewayService) validateExcelOAuthRoute(ctx context.Context, acco
 }
 
 func writeExcelOAuthRouteError(c *gin.Context) error {
-	c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+	c.JSON(http.StatusBadRequest, gin.H{"error": PresentExcelBPSError(c, http.StatusBadRequest, gin.H{
 		"type": "invalid_request_error", "code": excelOAuthRouteErrorCode,
 		"message": errExcelOAuthRouteUnavailable.Error(),
-	}})
+	})})
 	return errExcelOAuthRouteUnavailable
 }

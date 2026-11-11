@@ -159,6 +159,7 @@ func TestExcelBPSInvalidEncryptedContentRecoversSameRoute(t *testing.T) {
 }
 
 func TestExcelBPSInvalidEncryptedContentRetryIsBounded(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	for _, status := range []int{400, 429, 500} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			upstream := &httpUpstreamRecorder{responses: []*http.Response{
@@ -216,6 +217,7 @@ func TestExcelBPSInvalidEncryptedContentDoesNotRetryOtherFailures(t *testing.T) 
 }
 
 func TestExcelBPSInvalidEncryptedContentStopsOnDisconnect(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	for _, cancelBeforeRetry := range []bool{false, true} {
 		t.Run(fmt.Sprint(cancelBeforeRetry), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
