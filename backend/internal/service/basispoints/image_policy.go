@@ -61,6 +61,7 @@ func (h *ImageHistory) Progress() ImageProgress {
 // ImageCheckpoint authenticates a compact window echoed by the client without
 // persisting the window, images, or conversation contents.
 type ImageCheckpoint struct {
+	Trim   []ImageTrimPosition `json:",omitempty"`
 	Prefix ImageProgress
 	Split  int
 	Window ImageProgress
@@ -78,6 +79,14 @@ func (h *ImageHistory) Checkpoint(split int, window []any) (ImageCheckpoint, err
 func (h *ImageHistory) Reconcile(checkpoints []ImageCheckpoint) (bool, error) {
 	changed := false
 	for _, cp := range checkpoints {
+		if len(cp.Trim) > 0 {
+			applied, err := h.reconcileTrim(cp)
+			if err != nil {
+				return false, err
+			}
+			changed = changed || applied
+			continue
+		}
 		n := cp.Prefix.Count
 		w := cp.Window.Count
 		if n <= 0 || cp.Split <= 0 || cp.Split >= n || w <= 0 {

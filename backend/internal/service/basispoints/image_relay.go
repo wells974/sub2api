@@ -189,6 +189,15 @@ func (r *ImageRelay) Rewrite(raw []byte, scope string) ([]byte, error) {
 // RewriteWithImageLimit permits a separately validated history/new-input pair.
 // It does not modify the shared relay configuration or any byte/storage limit.
 func (r *ImageRelay) RewriteWithImageLimit(raw []byte, scope string, maxImages int) ([]byte, error) {
+	return r.RewriteWithImageBudget(raw, scope, maxImages, 0)
+}
+
+// RewriteWithImageBudget permits the combined upload plan for two separately
+// checked windows. Shared storage, per-image limits and configuration stay fixed.
+func (r *ImageRelay) RewriteWithImageBudget(raw []byte, scope string, maxImages, maxTotalMiB int) ([]byte, error) {
+	if maxTotalMiB < 0 || maxTotalMiB > 2*MaxRelayRequestMiB {
+		return nil, fmt.Errorf("invalid relay image total budget")
+	}
 	if r == nil {
 		return raw, nil
 	}
@@ -198,6 +207,9 @@ func (r *ImageRelay) RewriteWithImageLimit(raw []byte, scope string, maxImages i
 	r.mu.Unlock()
 	if maxImages > 0 {
 		limits.MaxImages = maxImages
+	}
+	if maxTotalMiB > 0 {
+		limits.MaxTotalMiB = maxTotalMiB
 	}
 	if closed {
 		return nil, ErrImageRelayStorage

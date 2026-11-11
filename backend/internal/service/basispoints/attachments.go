@@ -69,6 +69,15 @@ func PrepareNativeImages(raw []byte) (*NativeImages, error) {
 // PrepareNativeImagesWithLimit is PrepareNativeImages with an administrator-
 // configurable per-request inline image limit.
 func PrepareNativeImagesWithLimit(raw []byte, maxImages int) (*NativeImages, error) {
+	return PrepareNativeImagesWithBudget(raw, maxImages, imageRelayMaxRequestBytes>>20)
+}
+
+// PrepareNativeImagesWithBudget keeps the original media validation and upload
+// plan; only the independently configured aggregate budget differs.
+func PrepareNativeImagesWithBudget(raw []byte, maxImages, maxTotalMiB int) (*NativeImages, error) {
+	if maxTotalMiB < 1 || maxTotalMiB > 2*MaxRelayRequestMiB {
+		return nil, fmt.Errorf("invalid native image total budget")
+	}
 	if maxImages < 1 {
 		maxImages = imageRelayMaxRequestImages
 	}
@@ -136,8 +145,8 @@ func PrepareNativeImagesWithLimit(raw []byte, maxImages int) (*NativeImages, err
 				return nil, fmt.Errorf("basispoints inline image dimensions exceed the 64 megapixel limit")
 			}
 			total += size
-			if total > imageRelayMaxRequestBytes {
-				return nil, fmt.Errorf("basispoints inline images exceed the 32 MiB request limit")
+			if total > int64(maxTotalMiB)<<20 {
+				return nil, fmt.Errorf("basispoints inline images exceed the %d MiB request limit", maxTotalMiB)
 			}
 			attachment := InlineAttachment{MIME: mimeType, payload: payload, Size: size}
 			copy(attachment.digest[:], hash.Sum(nil))

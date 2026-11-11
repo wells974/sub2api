@@ -281,7 +281,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		return nil, newExcelBPSRateLimitedFailoverError(retryAfter)
 	}
-	imageSettings, err := s.settingService.GetExcelBPSImageRelaySettings(ctx)
+	imageSettings, err := s.excelBPSImageSettings(ctx)
 	if err != nil {
 		if isExcelBPSClientCancellation(c, err) {
 			return clientCanceled()
@@ -290,7 +290,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	}
 	// Reserve before the body is rewritten or converted. A rejection has not
 	// written anything yet, so the handler may switch to another account.
-	releaseImageAdmission, err := s.admitExcelBPSImageRequest(c, imageSettings, len(body))
+	releaseImageAdmission, err := s.admitExcelBPSImageRequest(c, imageSettings.ExcelBPSImageRelaySettings, len(body))
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +347,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			return fail(400, "basispoints_request_invalid", err.Error())
 		}
 	}
-	imagePolicy, err := s.prepareExcelImagePolicy(ctx, c, body, imageSettings, scope+"/model:"+model, identity != "" && !transient)
+	imagePolicy, err := s.prepareExcelImagePolicyWithBudget(ctx, c, body, imageSettings, scope+"/model:"+model, identity != "" && !transient)
 	if err != nil {
 		var policyErr *excelImagePolicyError
 		if errors.As(err, &policyErr) {
@@ -355,31 +355,25 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		return fail(400, "basispoints_request_invalid", err.Error())
 	}
-	if len(imagePolicy.reconciledBody) > 0 {
-		maxImageMiB, maxTotalMiB := imageSettings.Limits.MaxImageMiB, imageSettings.Limits.MaxTotalMiB
-		if imageSettings.Mode == ExcelBPSImageModeNative {
-			maxImageMiB, maxTotalMiB = 20, 32
-		}
-		if err = basispoints.ValidateImageBudget(body, maxImageMiB, maxTotalMiB); err != nil {
-			return fail(400, "basispoints_request_invalid", err.Error())
-		}
-		body = imagePolicy.reconciledBody
+	body, err = imagePolicy.reconcileBody(body, imageSettings)
+	if err != nil {
+		return fail(400, "basispoints_request_invalid", err.Error())
 	}
 	var compactOutput []any
 	var compactUsageWire map[string]any
 	var images *basispoints.NativeImages
 	if imageSettings.Enabled && imageSettings.Mode == ExcelBPSImageModeNative {
-		images, err = basispoints.PrepareNativeImagesWithLimit(body, imagePolicy.maxImages)
+		images, err = basispoints.PrepareNativeImagesWithBudget(body, imagePolicy.maxImages, imagePolicy.uploadTotalMiB(imageSettings))
 		if err == nil {
 			body, err = images.Body()
 		}
 	} else {
 		var relay *basispoints.ImageRelay
-		relay, err = s.excelBPSImageRelayForSettings(imageSettings)
+		relay, err = s.excelBPSImageRelayForSettings(imageSettings.ExcelBPSImageRelaySettings)
 		if err != nil {
 			return fail(503, "basispoints_image_relay_unavailable", "Excel BPS image relay is unavailable")
 		}
-		body, err = relay.RewriteWithImageLimit(body, scope, imagePolicy.maxImages)
+		body, err = relay.RewriteWithImageBudget(body, scope, imagePolicy.maxImages, imagePolicy.uploadTotalMiB(imageSettings))
 	}
 	if err != nil {
 		if errors.Is(err, basispoints.ErrImageRelayFull) {
@@ -551,8 +545,8 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		next := append(append([]any{}, window...), uploaded.Input[imagePolicy.split:]...)
 		// Count retained inline tool images, not the uploaded attachment placeholders.
-		if basispoints.CountInlineImages(window)+basispoints.CountInlineImages(imagePolicy.history.Input[imagePolicy.split:]) > imageSettings.Limits.MaxImages {
-			return fail(400, "basispoints_image_compaction_insufficient", "Compacted history still exceeds the image limit; reduce new images or compact manually")
+		if budgetErr := imagePolicy.validateContinuation(window, imageSettings); budgetErr != nil {
+			return fail(400, "basispoints_image_compaction_insufficient", budgetErr.Error())
 		}
 		body, compactErr = uploaded.WithInput(next, false)
 		if compactErr != nil {
