@@ -220,6 +220,9 @@ func newExcelBPSRequestTo(ctx context.Context, targetURL, accept string, body []
 // BPS deliberately bypasses Codex ticket/cookie injection and OAuth plugins:
 // only the selected account's bearer and ChatGPT account ID belong on this host.
 func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Context, account *Account, body []byte, start time.Time) (forwardResult *OpenAIForwardResult, forwardErr error) {
+	var bridge *basispoints.Bridge
+	diagnostics := newExcelBPSDiagnostics(body)
+	defer func() { diagnostics.log(ctx, account.ID, bridge, forwardErr != nil) }()
 	var compactUsage OpenAIUsage
 	var compactID string
 	originalImagePolicyModel := gjson.GetBytes(body, "model").String()
@@ -402,13 +405,13 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 	}
 	var upstreamBody []byte
-	var bridge *basispoints.Bridge
 	if images != nil {
 		upstreamBody, bridge, err = images.PrepareWithCatalog(scope, replay, catalog)
 	} else {
 		upstreamBody, bridge, err = basispoints.PrepareWithCatalog(body, scope, replay, catalog)
 	}
 	if err != nil {
+		diagnostics.observePreparationError(err)
 		if errors.Is(err, basispoints.ErrStateUnavailable) {
 			return fail(503, "basispoints_state_unavailable", basispoints.ErrStateUnavailable.Error())
 		}

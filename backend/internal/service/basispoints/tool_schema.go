@@ -86,7 +86,7 @@ func validateToolNumberBudget(value any) error {
 	return visit(value, 0)
 }
 
-type toolArgumentsSchemaError struct{}
+type toolArgumentsSchemaError struct{ diagnostic *ArgumentObservation }
 
 func (toolArgumentsSchemaError) Error() string {
 	return "basispoints function arguments do not satisfy the declared tool schema or validation resource limits"
