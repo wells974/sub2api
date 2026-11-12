@@ -262,10 +262,13 @@ func (c *AttachmentCache) get(ctx context.Context, scope string, img InlineAttac
 			entry.used = now
 			c.entries[key] = entry
 			c.mu.Unlock()
+			observeAttachmentHit(ctx)
 			return entry.id, nil
 		}
 		if flight := c.flights[key]; flight != nil {
 			c.mu.Unlock()
+			done := observeAttachmentWait(ctx)
+			defer done()
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
@@ -287,10 +290,12 @@ func (c *AttachmentCache) get(ctx context.Context, scope string, img InlineAttac
 		c.flights[key] = flight
 	}
 	c.mu.Unlock()
+	uploadDone := observeAttachmentUpload(ctx, img.Size)
 	id, err := upload(ctx, img)
 	if err == nil && !ValidAttachmentID(id) {
 		err = fmt.Errorf("basispoints returned an invalid attachment ID")
 	}
+	uploadDone(err)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.active--
