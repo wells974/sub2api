@@ -19,6 +19,7 @@ type excelBudgetOptions struct {
 	NativeTotalMiB int
 	ByteCompact    bool
 	TrimOldTools   bool
+	MessageImages  bool
 }
 
 // Extension settings/state do not change upstream's DTO or legacy policy. The
@@ -35,7 +36,7 @@ type excelImageBudgetState struct {
 
 func (settings excelImageBudgetSettings) extendedBudget() bool {
 	options := settings.BudgetOptions
-	return options.ByteCompact || options.TrimOldTools || (settings.Mode == ExcelBPSImageModeNative && options.NativeTotalMiB != 0 && options.NativeTotalMiB != 32)
+	return options.MessageImages || options.ByteCompact || options.TrimOldTools || (settings.Mode == ExcelBPSImageModeNative && options.NativeTotalMiB != 0 && options.NativeTotalMiB != 32)
 }
 
 func (s *OpenAIGatewayService) prepareExcelImagePolicyWithBudget(ctx context.Context, c *gin.Context, body []byte, settings excelImageBudgetSettings, scope string, trusted bool) (*excelImageBudgetState, error) {
@@ -104,7 +105,9 @@ func readExcelBudgetOptions(lookup func(string) (string, bool)) (excelBudgetOpti
 			*target = value
 		}
 	}
-	return options, nil
+	var err error
+	options.MessageImages, err = readExcelMessageImageOption(lookup)
+	return options, err
 }
 
 func excelImageBudget(settings excelImageBudgetSettings) basispoints.ImageBudget {
@@ -284,7 +287,7 @@ func (s *OpenAIGatewayService) prepareExcelImageBudgetPolicy(ctx context.Context
 	}
 	state.checkpoints = cached.Checkpoints
 	if len(cached.Checkpoints) > 0 {
-		changed, e := history.Reconcile(cached.Checkpoints)
+		changed, e := reconcileExcelMessageImages(ctx, scope, history, cached.Checkpoints)
 		if e != nil {
 			return nil, imagePolicyError(400, "basispoints_image_history_boundary", e.Error())
 		}
@@ -295,6 +298,10 @@ func (s *OpenAIGatewayService) prepareExcelImageBudgetPolicy(ctx context.Context
 			}
 		}
 	}
+	if err := s.prepareExcelMessageImages(ctx, state, settings, body, scope); err != nil {
+		return nil, err
+	}
+	history = state.history
 	n := history.Count
 	limit := settings.Limits.MaxImages
 	if state.compact || settings.Policy == "off" || settings.Policy == "" {
@@ -316,7 +323,7 @@ func (s *OpenAIGatewayService) prepareExcelImageBudgetPolicy(ctx context.Context
 		}
 		return state, nil
 	}
-	if n <= limit && !byteCompactNeeded(history, settings) {
+	if n <= limit && !byteCompactNeeded(history, settings) && !messageImageBudgetExceeded(history, settings) {
 		return state, nil
 	}
 	var progress *basispoints.ImageProgress
@@ -331,7 +338,7 @@ func (s *OpenAIGatewayService) prepareExcelImageBudgetPolicy(ctx context.Context
 			}
 		}
 	}
-	split, err := history.Split(progress)
+	split, err := splitExcelMessageHistory(history, progress, state.messageImageBoundary)
 	if err != nil {
 		return nil, imagePolicyError(400, "basispoints_image_history_boundary", err.Error())
 	}

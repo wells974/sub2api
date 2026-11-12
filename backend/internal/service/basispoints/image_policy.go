@@ -61,6 +61,8 @@ func (h *ImageHistory) Progress() ImageProgress {
 // ImageCheckpoint authenticates a compact window echoed by the client without
 // persisting the window, images, or conversation contents.
 type ImageCheckpoint struct {
+	MessageImages []MessageImagePosition `json:",omitempty"`
+
 	Trim   []ImageTrimPosition `json:",omitempty"`
 	Prefix ImageProgress
 	Split  int

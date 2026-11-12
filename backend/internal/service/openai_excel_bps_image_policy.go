@@ -29,6 +29,8 @@ type excelImagePolicyState struct {
 	maxImages      int
 	reconciledBody []byte
 	checkpoints    []basispoints.ImageCheckpoint
+
+	messageImageBoundary int
 }
 type excelImagePolicyCacheState struct {
 	Progress    basispoints.ImageProgress
@@ -79,7 +81,7 @@ func (s *OpenAIGatewayService) prepareExcelImagePolicy(ctx context.Context, c *g
 	}
 	state.checkpoints = cached.Checkpoints
 	if len(cached.Checkpoints) > 0 {
-		changed, e := history.Reconcile(cached.Checkpoints)
+		changed, e := reconcileExcelMessageImages(ctx, scope, history, cached.Checkpoints)
 		if e != nil {
 			return nil, imagePolicyError(400, "basispoints_image_history_boundary", e.Error())
 		}
