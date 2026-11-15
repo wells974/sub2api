@@ -22,7 +22,7 @@ import (
 func TestExcelBPSSchemaRepairCompactionUsage(t *testing.T) {
 	t.Setenv("SUB2API_BPS_SCHEMA_REPAIR_ENABLED", "true")
 	t.Setenv("SUB2API_BPS_SCHEMA_REPAIR_TIMEOUT_SECONDS", "30")
-	for _, scenario := range []string{"success", "failure", "cancel", "visible_window"} {
+	for _, scenario := range []string{"success", "failure", "cancel", "visible_window", "dispatch_failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			svc := openAIClientToolsTestService(nil)
 			svc.cache = newImagePolicyMemoryCache()
@@ -49,12 +49,15 @@ func TestExcelBPSSchemaRepairCompactionUsage(t *testing.T) {
 					if scenario == "visible_window" {
 						output = append(output, map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "retained history"}}})
 					}
-					wire, err := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"id": "compact", "status": "completed", "output": output, "usage": map[string]int{"input_tokens": 7, "output_tokens": 3}}})
+					wire, err := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"id": "compact", "status": "completed", "output": output, "usage": map[string]any{"input_tokens": 7, "output_tokens": 3, "input_tokens_details": map[string]any{"cache_write_tokens": 3, "cache_write_tokens_details": map[string]int{"ttl_30m_tokens": 1, "ttl_12h_tokens": 2}}}}})
 					require.NoError(t, err)
 					return bpsCompletionResponse(200, "data: "+string(wire)+"\n\n"), nil
 				}
+				if phase == 2 && scenario == "dispatch_failure" {
+					return bpsCompletionResponse(500, `{"error":{"message":"test dispatch failure"}}`), nil
+				}
 				if phase == 3 && scenario == "cancel" {
-					return &http.Response{StatusCode: 200, Header: http.Header{}, Body: &schemaCancellationBody{prefix: strings.NewReader("data: {\"type\":\"response.in_progress\",\"response\":{\"usage\":{\"input_tokens\":4,\"output_tokens\":1}}}\n\n"), closed: make(chan struct{}), cancel: cancel}}, nil
+					return &http.Response{StatusCode: 200, Header: http.Header{}, Body: &schemaCancellationBody{prefix: strings.NewReader("data: {\"type\":\"response.in_progress\",\"response\":{\"usage\":{\"input_tokens\":4,\"output_tokens\":1,\"input_tokens_details\":{\"cache_write_tokens\":1,\"cache_write_tokens_details\":{\"ttl_30m_tokens\":0,\"ttl_12h_tokens\":1}}}}}\n\n"), closed: make(chan struct{}), cancel: cancel}}, nil
 				}
 				args := `{"name":"lookup","arguments":{}}`
 				id := "initial"
@@ -68,7 +71,16 @@ func TestExcelBPSSchemaRepairCompactionUsage(t *testing.T) {
 					request, _ := io.ReadAll(req.Body)
 					require.Contains(t, string(request), "invalid_client_tool_arguments")
 				}
-				return bpsCompletionResponse(200, excelBPSRepairWire(t, id, "Run", args)), nil
+				wire := excelBPSRepairWire(t, id, "Run", args)
+				lines := strings.Split(wire, "\n")
+				for i, line := range lines {
+					if strings.HasPrefix(line, "data: ") {
+						payload, err := sjson.SetRaw(strings.TrimPrefix(line, "data: "), "response.usage.input_tokens_details", `{"cache_write_tokens":2,"cache_write_tokens_details":{"ttl_30m_tokens":1,"ttl_12h_tokens":1}}`)
+						require.NoError(t, err)
+						lines[i] = "data: " + payload
+					}
+				}
+				return bpsCompletionResponse(200, strings.Join(lines, "\n")), nil
 			}}
 			c := imagePolicyContext("/v1/responses")
 			c.Request = c.Request.WithContext(ctx)
@@ -80,12 +92,20 @@ func TestExcelBPSSchemaRepairCompactionUsage(t *testing.T) {
 				require.Error(t, err)
 			}
 			require.NotNil(t, result)
+			wantCreation, want30m, want12h := 7, 3, 4
 			switch scenario {
+			case "dispatch_failure":
+				wantCreation, want30m, want12h = 3, 1, 2
+				require.Equal(t, 2, phase)
+				require.Equal(t, 7, result.Usage.InputTokens)
+				require.Equal(t, 3, result.Usage.OutputTokens)
 			case "visible_window":
+				wantCreation, want30m, want12h = 5, 2, 3
 				require.Equal(t, 2, phase)
 				require.Equal(t, 17, result.Usage.InputTokens)
 				require.Equal(t, 5, result.Usage.OutputTokens)
 			case "cancel":
+				wantCreation, want30m, want12h = 6, 2, 4
 				require.Equal(t, 3, phase)
 				require.Equal(t, 21, result.Usage.InputTokens)
 				require.Equal(t, 6, result.Usage.OutputTokens)
@@ -94,6 +114,9 @@ func TestExcelBPSSchemaRepairCompactionUsage(t *testing.T) {
 				require.Equal(t, 27, result.Usage.InputTokens)
 				require.Equal(t, 7, result.Usage.OutputTokens)
 			}
+			require.Equal(t, wantCreation, result.Usage.CacheCreationInputTokens)
+			require.Equal(t, want30m, result.Usage.CacheCreation30mInputTokens)
+			require.Equal(t, want12h, result.Usage.CacheCreation12hInputTokens)
 		})
 	}
 }

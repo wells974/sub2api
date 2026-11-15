@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // A managed BPS parent keeps the legacy authorization marker because it never
@@ -54,71 +55,92 @@ func TestManagedBPSConnectionBillsCacheCreationAsShownToClient(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, stream := range []bool{false, true} {
 		for _, option := range []bool{true, false} {
-			t.Run(fmt.Sprintf("stream=%t/option=%t", stream, option), func(t *testing.T) {
-				reauth, repo := connectionTypeService(AccountTypeOAuth)
-				repo.managed = true
-				connection := &OpenAIAuthConnection{ID: "2b6f0f4e-7c3d-4b8e-9f21-5a7c9d1e3f40", AccountID: 42, Kind: "bps", Status: "active", RefreshState: "idle",
-					Revision: 1, Preferred: true, Capabilities: connectionCapabilities("bps", "")}
-				require.NoError(t, reauth.encryptConnectionCredentials(connection, map[string]any{
-					"access_token":       "synthetic-connection-token",
-					"chatgpt_account_id": "synthetic-workspace",
-					"client_id":          openai.ExcelClientID,
-					"expires_at":         strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10),
-				}))
-				repo.rows = []*OpenAIAuthConnection{connection}
+			for _, ttl := range []bool{false, true} {
+				t.Run(fmt.Sprintf("stream=%t/option=%t/ttl=%t", stream, option, ttl), func(t *testing.T) {
+					reauth, repo := connectionTypeService(AccountTypeOAuth)
+					repo.managed = true
+					connection := &OpenAIAuthConnection{ID: "2b6f0f4e-7c3d-4b8e-9f21-5a7c9d1e3f40", AccountID: 42, Kind: "bps", Status: "active", RefreshState: "idle",
+						Revision: 1, Preferred: true, Capabilities: connectionCapabilities("bps", "")}
+					require.NoError(t, reauth.encryptConnectionCredentials(connection, map[string]any{
+						"access_token":       "synthetic-connection-token",
+						"chatgpt_account_id": "synthetic-workspace",
+						"client_id":          openai.ExcelClientID,
+						"expires_at":         strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10),
+					}))
+					repo.rows = []*OpenAIAuthConnection{connection}
 
-				parent := managedBPSBillingParent(option)
-				require.False(t, parent.IsExcelBPSEnabled(), "fixture must carry the legacy authorization marker")
+					parent := managedBPSBillingParent(option)
+					require.False(t, parent.IsExcelBPSEnabled(), "fixture must carry the legacy authorization marker")
 
-				wire := `data: {"type":"response.completed","response":{"id":"resp_managed_bps_usage","status":"completed","model":"gpt-6-astra","output":[],"usage":` + excelBPSUsageWithCreation + `}}` + "\n\n"
-				upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(wire))}}
-				gateway := openAIClientToolsTestService(upstream)
-				gateway.excelOAuthReauth = reauth
-				body := []byte(fmt.Sprintf(`{"model":"gpt-6-astra","stream":%t,"input":"managed billing regression"}`, stream))
-				rec := httptest.NewRecorder()
-				c, _ := gin.CreateTestContext(rec)
-				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
-
-				result, err := gateway.Forward(context.Background(), c, parent, body)
-				require.NoError(t, err)
-				require.NotNil(t, result)
-				require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
-				require.Equal(t, "Bearer synthetic-connection-token", upstream.lastReq.Header.Get("Authorization"), "the request must be sent through the managed connection")
-				require.Equal(t, connection.ID, c.GetString("openai_auth_connection_id"))
-				require.Equal(t, 200, result.Usage.CacheCreationInputTokens, "retain the upstream measurement for local billing")
-
-				response := rec.Body.Bytes()
-				if stream {
-					for _, line := range strings.Split(rec.Body.String(), "\n") {
-						if strings.HasPrefix(line, "data: ") {
-							response = []byte(gjson.Get(strings.TrimPrefix(line, "data: "), "response").Raw)
+					usagePayload := excelBPSUsageWithCreation
+					if !ttl {
+						for _, details := range []string{"input_tokens_details", "prompt_tokens_details"} {
+							var err error
+							usagePayload, err = sjson.Delete(usagePayload, details+".cache_write_tokens_details")
+							require.NoError(t, err)
 						}
 					}
-				}
-				shown, ok := extractOpenAIUsageFromJSONBytes(response)
-				require.True(t, ok)
-				wantInput, wantCreation := 700, 200
-				if option {
-					wantInput, wantCreation = 900, 0
-				}
-				require.Equal(t, wantCreation, shown.CacheCreationInputTokens)
+					wire := `data: {"type":"response.completed","response":{"id":"resp_managed_bps_usage","status":"completed","model":"gpt-6-astra","output":[],"usage":` + usagePayload + `}}` + "\n\n"
+					upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(wire))}}
+					gateway := openAIClientToolsTestService(upstream)
+					gateway.excelOAuthReauth = reauth
+					body := []byte(fmt.Sprintf(`{"model":"gpt-6-astra","stream":%t,"input":"managed billing regression"}`, stream))
+					rec := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(rec)
+					c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 
-				usageSvc, usageRepo, billingRepo := managedBPSBillingUsageService()
-				require.NoError(t, usageSvc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
-					Result: result, APIKey: &APIKey{ID: 1001}, User: &User{ID: 2001}, Account: parent,
-				}))
-				require.NotNil(t, usageRepo.lastLog)
-				log := usageRepo.lastLog
-				require.Equal(t, shown.CacheCreationInputTokens, log.CacheCreationTokens, "billing must match the usage returned to the client")
-				require.Equal(t, wantInput, log.InputTokens)
-				require.Equal(t, wantCreation, log.CacheCreationTokens)
-				require.Equal(t, 100, log.CacheReadTokens)
-				require.InDelta(t, float64(wantInput)*5e-6, log.InputCost, 1e-12)
-				require.InDelta(t, float64(wantCreation)*6.25e-6, log.CacheCreationCost, 1e-12)
-				require.Equal(t, 1, billingRepo.calls)
-				require.Equal(t, wantInput, billingRepo.lastCmd.InputTokens)
-				require.Equal(t, wantCreation, billingRepo.lastCmd.CacheCreationTokens)
-			})
+					result, err := gateway.Forward(context.Background(), c, parent, body)
+					require.NoError(t, err)
+					require.NotNil(t, result)
+					require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
+					require.Equal(t, "Bearer synthetic-connection-token", upstream.lastReq.Header.Get("Authorization"), "the request must be sent through the managed connection")
+					require.Equal(t, connection.ID, c.GetString("openai_auth_connection_id"))
+					require.Equal(t, 200, result.Usage.CacheCreationInputTokens, "retain the upstream measurement for local billing")
+
+					response := rec.Body.Bytes()
+					if stream {
+						for _, line := range strings.Split(rec.Body.String(), "\n") {
+							if strings.HasPrefix(line, "data: ") {
+								response = []byte(gjson.Get(strings.TrimPrefix(line, "data: "), "response").Raw)
+							}
+						}
+					}
+					shown, ok := extractOpenAIUsageFromJSONBytes(response)
+					require.True(t, ok)
+					wantInput, wantCreation := 700, 200
+					if option {
+						wantInput, wantCreation = 900, 0
+					}
+					require.Equal(t, wantCreation, shown.CacheCreationInputTokens)
+					want30m, want12h := 0, 0
+					cacheCost := float64(wantCreation) * 6.25e-6
+					if ttl && !option {
+						want30m, want12h = 150, 50
+						// Upstream's default 12h write price is twice its 30m price.
+						cacheCost = 150*6.25e-6 + 50*12.5e-6
+					}
+					require.Equal(t, want30m, shown.CacheCreation30mInputTokens)
+					require.Equal(t, want12h, shown.CacheCreation12hInputTokens)
+
+					usageSvc, usageRepo, billingRepo := managedBPSBillingUsageService()
+					require.NoError(t, usageSvc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+						Result: result, APIKey: &APIKey{ID: 1001}, User: &User{ID: 2001}, Account: parent,
+					}))
+					require.NotNil(t, usageRepo.lastLog)
+					log := usageRepo.lastLog
+					require.Equal(t, shown.CacheCreationInputTokens, log.CacheCreationTokens, "billing must match the usage returned to the client")
+					require.Equal(t, wantInput, log.InputTokens)
+					require.Equal(t, wantCreation, log.CacheCreationTokens)
+					require.Equal(t, want30m, log.CacheCreation30mTokens)
+					require.Equal(t, want12h, log.CacheCreation12hTokens)
+					require.Equal(t, 100, log.CacheReadTokens)
+					require.InDelta(t, float64(wantInput)*5e-6, log.InputCost, 1e-12)
+					require.InDelta(t, cacheCost, log.CacheCreationCost, 1e-12)
+					require.Equal(t, 1, billingRepo.calls)
+					require.Equal(t, wantInput, billingRepo.lastCmd.InputTokens)
+					require.Equal(t, wantCreation, billingRepo.lastCmd.CacheCreationTokens)
+				})
+			}
 		}
 	}
 }

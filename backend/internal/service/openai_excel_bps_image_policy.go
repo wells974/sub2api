@@ -204,6 +204,8 @@ func addImagePolicyUsage(to *OpenAIUsage, from OpenAIUsage) {
 	to.ImageOutputTokens += from.ImageOutputTokens
 	to.ImageCacheReadTokens += from.ImageCacheReadTokens
 	to.CacheCreationInputTokens += from.CacheCreationInputTokens
+	to.CacheCreation30mInputTokens += from.CacheCreation30mInputTokens
+	to.CacheCreation12hInputTokens += from.CacheCreation12hInputTokens
 	to.CacheReadInputTokens += from.CacheReadInputTokens
 }
 
@@ -214,6 +216,8 @@ func subtractImagePolicyUsage(to *OpenAIUsage, from OpenAIUsage) {
 	from.ImageOutputTokens = -from.ImageOutputTokens
 	from.ImageCacheReadTokens = -from.ImageCacheReadTokens
 	from.CacheCreationInputTokens = -from.CacheCreationInputTokens
+	from.CacheCreation30mInputTokens = -from.CacheCreation30mInputTokens
+	from.CacheCreation12hInputTokens = -from.CacheCreation12hInputTokens
 	from.CacheReadInputTokens = -from.CacheReadInputTokens
 	addImagePolicyUsage(to, from)
 }

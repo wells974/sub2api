@@ -60,3 +60,25 @@ node node_modules/vite/bin/vite.js build
 `250_openai_cache_write_ttl.sql` 的尾部空行来自上游 tag；为遵守不可变迁移约束未作格式调整。相对上游的自有改动执行 `git diff --check v2.21.3` 检查。
 
 所有请求链路验证使用测试桩或隔离服务，不调用真实付费模型；真实供应商兼容性、线上负载与部署验收不在本次范围内。
+
+## 二次逻辑复查
+
+重点对照自动合并后的跨模块契约：规范 Schema 诊断与一次纠错、图片裁剪/压缩/缓存回放、按需目录、公开错误与 Ops 原始归因、号池配置保存，以及更新仓库与持久化更新。发现并修复两处缓存用量字段适配遗漏：
+
+1. 上游新增嵌套 `cache_creation_input_tokens` 别名和 30 分钟/12 小时缓存写入明细后，BPS 的缓存转普通输入功能仍只清除旧字段。客户端因此仍可能读到缓存写入用量，与内部按普通输入计费不一致。现在清除所有受支持的别名和时长明细，保留原始内部测量、总输入、缓存读取及无关扩展字段。
+2. 图片压缩用量的加减没有同步扩展时长字段。正常终态可从聚合响应中读取明细，但纠错取消或压缩后转发失败时，兜底结果漏记压缩阶段的时长明细。现在加减同时覆盖两种时长，保持正常终态不重复累计。
+
+先扩充回归测试，确认修复前缓存转普通输入的 JSON/SSE、普通/compact 接口及中间/失败终态存在遗漏，并复现纠错取消和压缩后 HTTP 500 两条路径丢失明细。修复后的验证覆盖成功、纠错失败、取消、可见历史阻止纠错和压缩后转发失败；同时复验托管授权连接计费和上游缓存时长计价。
+
+本轮复验命令（后端在 `backend/`，前端在 `frontend/`）：
+
+```sh
+go test ./internal/service/basispoints -count=1
+go test -tags unit ./internal/service ./internal/handler ./internal/server/routes ./internal/server/middleware -run 'ExcelBPS|ExcelOAuth|ManagedBPS|AccountOps|UpdateService|CompareVersionsLocalRevision|Setting.*ExcelBPS|Ops.*(Bridge|Presentation|Stream)|CacheWriteTTL' -count=1
+go test -race -tags unit ./internal/service -run 'TestExcelBPS(SchemaRepair|MessageImage|ToolArgumentsDiagnostic|Extensions|CacheCreationAsInput)|TestManagedBPSConnectionBillsCacheCreationAsShownToClient' -count=1
+node node_modules/vitest/vitest.mjs run src/components/admin/operations/__tests__/AccountOpsPoolSettings.spec.ts src/views/admin/__tests__/AccountOpsView.spec.ts src/i18n/__tests__/localeKeyCompleteness.spec.ts src/utils/__tests__/publicSettingsPresentation.spec.ts src/api/__tests__/auth-public-settings.spec.ts
+```
+
+上述复验最终全部通过，包含服务层竞态检查和前端 36 项测试。计费回归同时覆盖有/无时长明细；有明细且未开启缓存转普通输入时，按上游 30 分钟/12 小时价格分别计费。
+
+本轮没有修改数据库迁移和前端实现；沿用上一轮隔离数据库验证及正式构建结果。未推送、未部署。
