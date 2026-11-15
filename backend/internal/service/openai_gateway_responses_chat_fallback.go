@@ -91,7 +91,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 
 	billingModel := resolveOpenAIForwardModel(account, originalModel, "")
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
-	if err := validateGPT61SolCompatRequest(body, upstreamModel); err != nil {
+	if err := validateGPT61CompatRequest(body, upstreamModel); err != nil {
 		writeOpenAIResponsesFallbackError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, err
 	}
@@ -355,6 +355,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	})
 
 	if scan.Err != nil {
+		if len(scan.SemanticFailure) > 0 {
+			scan.Err = writeNativeAnthropicSemanticFailure(c, scan.SemanticFailure, originalModel)
+		}
 		return &OpenAIForwardResult{
 			RequestID:                     requestID,
 			UpstreamHeaders:               resp.Header,

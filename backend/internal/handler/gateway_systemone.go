@@ -56,6 +56,9 @@ func (h *GatewayHandler) SystemOne(c *gin.Context) {
 
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
+		if middleware2.RejectRequestBodyReadError(c, err) {
+			return
+		}
 		if maxErr, ok := extractMaxBytesError(err); ok {
 			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return
@@ -188,6 +191,9 @@ func (h *GatewayHandler) SystemOne(c *gin.Context) {
 		result, forwardErr := h.gatewayService.ForwardSystemOne(c.Request.Context(), c, account, body)
 		if accountRelease != nil {
 			accountRelease()
+		}
+		if service.IsUpstreamModerationDenied(forwardErr) {
+			return
 		}
 		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, time.Since(forwardStart).Milliseconds())
 

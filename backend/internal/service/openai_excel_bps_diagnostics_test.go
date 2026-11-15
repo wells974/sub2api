@@ -75,7 +75,9 @@ func TestExcelBPSRequestDiagnosticsIntegration(t *testing.T) {
 						require.Equal(t, "tool_arguments", gjson.Get(diagnostic, "schema_phase").String())
 						require.Equal(t, "type", gjson.Get(diagnostic, "schema_failure.keyword").String())
 						require.Equal(t, "/count", gjson.Get(diagnostic, "schema_failure.path").String())
-						require.Contains(t, rec.Body.String(), "basispoints function arguments do not satisfy the declared tool schema or validation resource limits")
+						require.Contains(t, rec.Body.String(), "basispoints function arguments rejected: schema_validation")
+						require.Contains(t, rec.Body.String(), `"rule":"type"`)
+						require.NotContains(t, rec.Body.String(), "PRIVATE_")
 					} else {
 						require.False(t, gjson.Get(diagnostic, "schema_phase").Exists())
 					}

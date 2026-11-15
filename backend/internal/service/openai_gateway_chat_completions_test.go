@@ -614,9 +614,9 @@ func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadError(t *testing.T) {
 	code, message, ok := OpenAIUpstreamStreamReadErrorDetails(err)
 	require.True(t, ok)
 	require.Equal(t, OpenAIUpstreamHTTP2StreamErrorCode, code)
-	require.Equal(t, "Upstream HTTP/2 stream failed", message)
+	require.Equal(t, "Upstream connection reset by peer (HTTP/2 INTERNAL_ERROR). Content may be incomplete. Do not automatically retry the same request.", message)
 	require.NotContains(t, message, "stream ID")
-	require.NotContains(t, message, "INTERNAL_ERROR")
+	require.Contains(t, message, "INTERNAL_ERROR")
 }
 
 func TestNormalizeResponsesRequestServiceTier(t *testing.T) {
@@ -1788,8 +1788,8 @@ func TestGPT61SolRejectsDisabledReasoningBeforeForwarding(t *testing.T) {
 		`{"model":"public","thinking":{"type":"disabled"}}`,
 		`{"model":"gpt-6.1-sol-minimal"}`,
 	} {
-		require.Error(t, validateGPT61SolCompatRequest([]byte(body), "gpt-6.1-sol"))
-		require.NoError(t, validateGPT61SolCompatRequest([]byte(body), "gpt-6-sol"))
+		require.Error(t, validateGPT61CompatRequest([]byte(body), "gpt-6.1-sol"))
+		require.NoError(t, validateGPT61CompatRequest([]byte(body), "gpt-6-sol"))
 	}
 	for _, field := range []string{`"reasoning_effort":"none"`, `"reasoning_effort":"minimal"`, `"tools":[{"type":"function","function":{"name":"lookup"}}]`} {
 		body := []byte(`{"model":"public",` + field + `,"messages":[{"role":"user","content":"hello"}]}`)

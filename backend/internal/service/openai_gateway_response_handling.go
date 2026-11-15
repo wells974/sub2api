@@ -55,6 +55,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel, reasoningEffort string) (*openaiStreamingResult, error) {
+	ctx = bindOpenAI429ResponseObservation(ctx, resp, c)
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -551,6 +552,16 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			logger.LegacyPrintf("service.openai_gateway", "SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, scanErr)
 			sendErrorEvent("response_too_large", "Upstream response exceeded the size limit")
 			return resultWithUsage(), scanErr, true
+		}
+		if !clientDisconnected && ctx.Err() == nil {
+			if _, reset := openAIHTTP2PeerResetReason(scanErr); reset {
+				discardIncompletePluginEvent()
+				flushPending("Client disconnected during reset flush")
+				errorEventSent = true
+				if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, upstreamRequestID, scanErr); handled {
+					return resultWithUsage(), resetErr, true
+				}
+			}
 		}
 		if !openAIStreamClientOutputStarted(c, clientOutputStarted) && !eventShouldFlush {
 			msg := "OpenAI stream disconnected before completion"
@@ -1515,6 +1526,8 @@ func mergeOpenAIUsageNonZero(dst *OpenAIUsage, src OpenAIUsage) {
 	}
 	if src.CacheCreationInputTokens > 0 {
 		dst.CacheCreationInputTokens = src.CacheCreationInputTokens
+		dst.CacheCreation30mInputTokens = src.CacheCreation30mInputTokens
+		dst.CacheCreation12hInputTokens = src.CacheCreation12hInputTokens
 	}
 	if src.CacheReadInputTokens > 0 {
 		dst.CacheReadInputTokens = src.CacheReadInputTokens
@@ -1796,6 +1809,7 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 	}
 	cacheReadTokens := openAICacheReadTokensFromUsage(value)
 	cacheCreationTokens := openAICacheCreationTokensFromUsage(value)
+	cache30m, cache12h := openAICacheCreationTTLTokensFromUsage(value, cacheCreationTokens)
 	imageOutputTokens := value.Get("output_tokens_details.image_tokens").Int()
 	if imageOutputTokens == 0 {
 		imageOutputTokens = value.Get("completion_tokens_details.image_tokens").Int()
@@ -1808,13 +1822,15 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 		value.Get("prompt_tokens_details.image_tokens"),
 	)
 	return OpenAIUsage{
-		InputTokens:              int(inputTokens),
-		ImageInputTokens:         imageInputTokens,
-		OutputTokens:             int(outputTokens),
-		CacheCreationInputTokens: cacheCreationTokens,
-		CacheReadInputTokens:     cacheReadTokens,
-		CacheReadKnown:           openAICacheReadKnownFromUsage(value),
-		ImageOutputTokens:        int(imageOutputTokens),
+		InputTokens:                 int(inputTokens),
+		ImageInputTokens:            imageInputTokens,
+		OutputTokens:                int(outputTokens),
+		CacheCreationInputTokens:    cacheCreationTokens,
+		CacheCreation30mInputTokens: cache30m,
+		CacheCreation12hInputTokens: cache12h,
+		CacheReadInputTokens:        cacheReadTokens,
+		CacheReadKnown:              openAICacheReadKnownFromUsage(value),
+		ImageOutputTokens:           int(imageOutputTokens),
 	}, true
 }
 
@@ -1870,6 +1886,8 @@ func openAICacheReadTokensFromUsage(value gjson.Result) int {
 
 func openAICacheCreationTokensFromUsage(value gjson.Result) int {
 	for _, nested := range []gjson.Result{
+		value.Get("input_tokens_details.cache_creation_input_tokens"),
+		value.Get("prompt_tokens_details.cache_creation_input_tokens"),
 		value.Get("input_tokens_details.cache_write_tokens"),
 		value.Get("prompt_tokens_details.cache_write_tokens"),
 		value.Get("input_tokens_details.cache_creation_tokens"),
@@ -1888,9 +1906,35 @@ func openAICacheCreationTokensFromUsage(value gjson.Result) int {
 	)
 }
 
+// Only reported usage determines the lifetime. Missing, partial or inconsistent
+// details keep the aggregate's legacy price; request TTLs cannot prove writes.
+func openAICacheCreationTTLTokensFromUsage(value gjson.Result, aggregate int) (int, int) {
+	for _, path := range []string{"input_tokens_details", "prompt_tokens_details"} {
+		details := value.Get(path + ".cache_write_tokens_details")
+		if !details.Exists() {
+			continue
+		}
+		short, long := details.Get("ttl_30m_tokens"), details.Get("ttl_12h_tokens")
+		if short.Type != gjson.Number || long.Type != gjson.Number {
+			return 0, 0
+		}
+		a, b := short.Int(), long.Int()
+		if a < 0 || b < 0 || float64(a) != short.Float() || float64(b) != long.Float() ||
+			a > int64(aggregate) || b != int64(aggregate)-a {
+			return 0, 0
+		}
+		return int(a), int(b)
+	}
+	return 0, 0
+}
+
 func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
+	ctx = bindOpenAI429ResponseObservation(ctx, resp, c)
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, resp.Header.Get("x-request-id"), err); handled {
+			return nil, resetErr
+		}
 		return nil, err
 	}
 	observer := upstreamResponseModelObserverFromContext(c)

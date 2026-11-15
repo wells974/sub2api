@@ -21,7 +21,7 @@ import (
 )
 
 func schemaGatewayRequest(stream bool) []byte {
-	return []byte(fmt.Sprintf(`{"model":"gpt-5.6-sol","stream":%t,"reasoning":{"effort":"high"},"input":"check count","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"count":{"type":"integer"}},"required":["count"],"additionalProperties":false}}]}`, stream))
+	return []byte(fmt.Sprintf(`{"model":"gpt-5.6-sol","stream":%t,"service_tier":"priority","reasoning":{"effort":"high"},"input":"check count","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"count":{"type":"integer"}},"required":["count"],"additionalProperties":false}}]}`, stream))
 }
 
 func TestExcelBPSSchemaRepairDefaultsAndConfig(t *testing.T) {
@@ -108,6 +108,9 @@ func TestExcelBPSSchemaRepairRouteUsageAndBoundaries(t *testing.T) {
 					wantInput, wantOutput = 14, 3
 				}
 				require.Len(t, upstream.requests, attempts)
+				for _, sent := range upstream.bodies {
+					require.False(t, gjson.GetBytes(sent, "service_tier").Exists(), "schema repair must retain the upstream BPS wire fix")
+				}
 				require.Equal(t, wantInput, result.Usage.InputTokens)
 				require.Equal(t, wantOutput, result.Usage.OutputTokens)
 				require.NotContains(t, rec.Body.String(), "PRIVATE_")

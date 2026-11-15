@@ -31,6 +31,8 @@ func (UsageLog) Annotations() []schema.Annotation {
 // Fields 定义使用日志实体的所有字段。
 func (UsageLog) Fields() []ent.Field {
 	return []ent.Field{
+		// Historical provider snapshot. NULL remains unknown; never backfill from mutable entities.
+		field.String("platform").MaxLen(50).Optional().Nillable(),
 		// 关联字段
 		field.Int64("user_id"),
 		field.Int64("api_key_id"),
@@ -87,6 +89,10 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int("cache_creation_5m_tokens").
 			Default(0),
 		field.Int("cache_creation_1h_tokens").
+			Default(0),
+		field.Int("cache_creation_30m_tokens").
+			Default(0),
+		field.Int("cache_creation_12h_tokens").
 			Default(0),
 
 		// 成本字段

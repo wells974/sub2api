@@ -42,6 +42,9 @@ func (h *OpenAIGatewayHandler) ResponsesInputTokens(c *gin.Context) {
 
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
+		if middleware2.RejectRequestBodyReadError(c, err) {
+			return
+		}
 		if maxErr, ok := extractMaxBytesError(err); ok {
 			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return
@@ -130,6 +133,9 @@ func (h *OpenAIGatewayHandler) ResponsesInputTokens(c *gin.Context) {
 	}
 
 	setOpsSelectedAccount(c, account.ID, account.Platform)
+	if err := service.CheckUpstreamModeration(c.Request.Context(), c, account); err != nil {
+		return
+	}
 	if err := h.gatewayService.ForwardResponsesInputTokens(c.Request.Context(), c, account, forwardBody); err != nil {
 		reqLog.Error("openai_input_tokens.forward_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 	}
@@ -141,6 +147,9 @@ func (h *OpenAIGatewayHandler) ResponsesInputTokens(c *gin.Context) {
 func (h *OpenAIGatewayHandler) GrokCountTokens(c *gin.Context) {
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
+		if middleware2.RejectRequestBodyReadError(c, err) {
+			return
+		}
 		if maxErr, ok := extractMaxBytesError(err); ok {
 			h.anthropicErrorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return
@@ -212,6 +221,9 @@ func (h *OpenAIGatewayHandler) CountTokens(c *gin.Context) {
 
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
+		if middleware2.RejectRequestBodyReadError(c, err) {
+			return
+		}
 		if maxErr, ok := extractMaxBytesError(err); ok {
 			h.anthropicErrorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return

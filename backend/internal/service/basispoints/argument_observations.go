@@ -1,8 +1,6 @@
 package basispoints
 
 import (
-	"errors"
-
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 )
@@ -20,24 +18,12 @@ type ArgumentObservation struct {
 	ActualType    string   `json:"actual_type,omitempty"`
 }
 
-func observedArgumentError(info tool, err error) error {
-	diagnostic := &ArgumentObservation{Tool: safeSchemaName(info.Name), Reason: "resource_limit"}
-	if info.Namespace != "" {
-		diagnostic.Tool = safeSchemaName(info.Namespace + "." + info.Name)
-	}
-	var validation *jsonschema.ValidationError
-	if errors.As(err, &validation) {
-		diagnostic.Reason = "schema_validation"
-		// Report the first leaf only. Union validation can have many branches;
-		// do not log the tree or stringify errors (which embed argument values).
-		for depth := 0; len(validation.Causes) > 0 && depth < 128; depth++ {
-			validation = validation.Causes[0]
-		}
-		if validation.ErrorKind != nil {
-			if keyword := validation.ErrorKind.KeywordPath(); len(keyword) > 0 {
-				diagnostic.Keyword = safeSchemaName(keyword[0])
-			}
-		}
+// repairArgumentObservation adapts the upstream diagnostic to the fork's
+// internal correction contract. The upstream extractor alone chooses the failed
+// rule and path: union schemas must never be reduced to an arbitrary branch.
+func repairArgumentObservation(d *ToolArgumentsDiagnostic, validation *jsonschema.ValidationError) *ArgumentObservation {
+	diagnostic := &ArgumentObservation{Tool: d.Tool, Reason: d.Reason, Path: d.Path, Keyword: d.Rule}
+	if validation != nil && d.Reason == "schema_validation" {
 		switch failure := validation.ErrorKind.(type) {
 		case *kind.Required:
 			for i, name := range failure.Missing {
@@ -47,28 +33,17 @@ func observedArgumentError(info tool, err error) error {
 				diagnostic.Missing = append(diagnostic.Missing, safeSchemaName(name))
 			}
 		case *kind.Type:
-			// These are library-generated JSON type names, never values.
 			diagnostic.ActualType = failure.Got
 			diagnostic.ExpectedTypes = append([]string(nil), failure.Want...)
 		}
-		var path []string
-		node := info.Parameters
-		for _, part := range validation.InstanceLocation {
-			properties, _ := node["properties"].(object)
-			if property, exists := properties[part]; exists {
-				path = append(path, safeSchemaName(part))
-				node, _ = property.(object)
-			} else {
-				// Even numeric unknown property names may be user data. Redact
-				// them as well; no instance values are needed for diagnostics.
-				path = append(path, "[property]")
-				node = nil
-			}
-			if len(path) == 128 {
-				break
-			}
-		}
-		diagnostic.Path = schemaPointer(path, true)
 	}
-	return toolArgumentsSchemaError{diagnostic: diagnostic}
+	return diagnostic
+}
+
+// A failed correction keeps the same canonical diagnostic on the JSON/SSE path.
+func (d *ArgumentObservation) toolArgumentsDiagnostic() *ToolArgumentsDiagnostic {
+	if d == nil {
+		return nil
+	}
+	return &ToolArgumentsDiagnostic{Tool: d.Tool, Reason: d.Reason, Path: d.Path, Rule: d.Keyword}
 }

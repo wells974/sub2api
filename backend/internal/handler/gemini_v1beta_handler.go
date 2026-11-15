@@ -398,6 +398,9 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
 	if err != nil {
+		if middleware.RejectRequestBodyReadError(c, err) {
+			return
+		}
 		if maxErr, ok := extractMaxBytesError(err); ok {
 			googleError(c, http.StatusRequestEntityTooLarge, buildBodyTooLargeMessage(maxErr.Limit))
 			return
@@ -800,6 +803,9 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
+		}
+		if service.IsUpstreamModerationDenied(err) {
+			return
 		}
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError

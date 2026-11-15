@@ -57,6 +57,12 @@ func ProvideEmailQueueService(emailService *EmailService) *EmailQueueService {
 	return NewEmailQueueService(emailService, 3)
 }
 
+func ProvideAutoCreditEmailWorker(repo AutoCreditEmailOutboxRepository, mail *NotificationEmailService, cfg *config.Config) *AutoCreditEmailWorker {
+	w := NewAutoCreditEmailWorker(repo, mail)
+	startBackgroundService(cfg, w)
+	return w
+}
+
 // ProvideAuthService wires the optional captcha providers into AuthService while
 // keeping NewAuthService's public constructor compatible with existing tests.
 func ProvideAuthService(
@@ -614,10 +620,13 @@ func ProvideRateLimitService(
 	tokenCacheInvalidator TokenCacheInvalidator,
 	ollamaCloudUsage *OllamaCloudUsageService,
 	accountOps *AccountOpsService,
+	tempUnschedTriggerCounter TempUnschedTriggerCounter,
 	rdb *redis.Client,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	svc.accountOps = accountOps
+	// Redis 计数让多实例共享同一条规则的错误累计；rdb 为空时构造器返回 nil，服务回退到进程内窗口。
+	svc.SetTempUnschedTriggerCounter(tempUnschedTriggerCounter)
 	if rdb != nil {
 		svc.qualityTrigger = &quality5xxTrigger{queue: qualityqueue.NewRedis(rdb)}
 	}
@@ -1039,6 +1048,7 @@ func ProvideAPIKeyServiceWithGroupProtection(
 
 // ProviderSet is the Wire provider set for all services
 var ProviderSet = wire.NewSet(
+	ProvideAutoCreditEmailWorker,
 	ProvideAccountPerformanceService,
 	ProvideRequestCaptureManager,
 	// Core services
@@ -1343,8 +1353,9 @@ func ProvideCRSSyncService(accounts AccountRepository, proxies ProxyRepository, 
 }
 
 // ProvideContentModerationService reuses the existing fixed TOTP AES-GCM key.
-func ProvideContentModerationService(settings SettingRepository, repo ContentModerationRepository, hashes ContentModerationHashCache, groups GroupRepository, users UserRepository, proxies ProxyRepository, invalidator APIKeyAuthCacheInvalidator, email *EmailService, db *sql.DB, cipher SecretEncryptor, cfg *config.Config) *ContentModerationService {
+func ProvideContentModerationService(accounts AccountRepository, settings SettingRepository, repo ContentModerationRepository, hashes ContentModerationHashCache, groups GroupRepository, users UserRepository, proxies ProxyRepository, invalidator APIKeyAuthCacheInvalidator, email *EmailService, db *sql.DB, cipher SecretEncryptor, cfg *config.Config) *ContentModerationService {
 	s := NewContentModerationService(settings, repo, hashes, groups, users, proxies, invalidator, email)
+	s.accountRepo = accounts
 	s.cyberEvidence = cyberevidence.New(cyberevidence.NewSQLStore(db), cipher, cfg != nil && cfg.Totp.EncryptionKeyConfigured)
 	return s
 }

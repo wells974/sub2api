@@ -55,6 +55,11 @@ func IDLTE(id int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldLTE(FieldID, id))
 }
 
+// Platform applies equality check predicate on the "platform" field. It's identical to PlatformEQ.
+func Platform(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldPlatform, v))
+}
+
 // UserID applies equality check predicate on the "user_id" field. It's identical to UserIDEQ.
 func UserID(v int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldUserID, v))
@@ -158,6 +163,16 @@ func CacheCreation5mTokens(v int) predicate.UsageLog {
 // CacheCreation1hTokens applies equality check predicate on the "cache_creation_1h_tokens" field. It's identical to CacheCreation1hTokensEQ.
 func CacheCreation1hTokens(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldCacheCreation1hTokens, v))
+}
+
+// CacheCreation30mTokens applies equality check predicate on the "cache_creation_30m_tokens" field. It's identical to CacheCreation30mTokensEQ.
+func CacheCreation30mTokens(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldCacheCreation30mTokens, v))
+}
+
+// CacheCreation12hTokens applies equality check predicate on the "cache_creation_12h_tokens" field. It's identical to CacheCreation12hTokensEQ.
+func CacheCreation12hTokens(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldCacheCreation12hTokens, v))
 }
 
 // InputCost applies equality check predicate on the "input_cost" field. It's identical to InputCostEQ.
@@ -288,6 +303,81 @@ func CacheTTLOverridden(v bool) predicate.UsageLog {
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldCreatedAt, v))
+}
+
+// PlatformEQ applies the EQ predicate on the "platform" field.
+func PlatformEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldPlatform, v))
+}
+
+// PlatformNEQ applies the NEQ predicate on the "platform" field.
+func PlatformNEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldPlatform, v))
+}
+
+// PlatformIn applies the In predicate on the "platform" field.
+func PlatformIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldPlatform, vs...))
+}
+
+// PlatformNotIn applies the NotIn predicate on the "platform" field.
+func PlatformNotIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldPlatform, vs...))
+}
+
+// PlatformGT applies the GT predicate on the "platform" field.
+func PlatformGT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldPlatform, v))
+}
+
+// PlatformGTE applies the GTE predicate on the "platform" field.
+func PlatformGTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldPlatform, v))
+}
+
+// PlatformLT applies the LT predicate on the "platform" field.
+func PlatformLT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldPlatform, v))
+}
+
+// PlatformLTE applies the LTE predicate on the "platform" field.
+func PlatformLTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldPlatform, v))
+}
+
+// PlatformContains applies the Contains predicate on the "platform" field.
+func PlatformContains(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContains(FieldPlatform, v))
+}
+
+// PlatformHasPrefix applies the HasPrefix predicate on the "platform" field.
+func PlatformHasPrefix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasPrefix(FieldPlatform, v))
+}
+
+// PlatformHasSuffix applies the HasSuffix predicate on the "platform" field.
+func PlatformHasSuffix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasSuffix(FieldPlatform, v))
+}
+
+// PlatformIsNil applies the IsNil predicate on the "platform" field.
+func PlatformIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldPlatform))
+}
+
+// PlatformNotNil applies the NotNil predicate on the "platform" field.
+func PlatformNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldPlatform))
+}
+
+// PlatformEqualFold applies the EqualFold predicate on the "platform" field.
+func PlatformEqualFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEqualFold(FieldPlatform, v))
+}
+
+// PlatformContainsFold applies the ContainsFold predicate on the "platform" field.
+func PlatformContainsFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContainsFold(FieldPlatform, v))
 }
 
 // UserIDEQ applies the EQ predicate on the "user_id" field.
@@ -1298,6 +1388,86 @@ func CacheCreation1hTokensLT(v int) predicate.UsageLog {
 // CacheCreation1hTokensLTE applies the LTE predicate on the "cache_creation_1h_tokens" field.
 func CacheCreation1hTokensLTE(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldLTE(FieldCacheCreation1hTokens, v))
+}
+
+// CacheCreation30mTokensEQ applies the EQ predicate on the "cache_creation_30m_tokens" field.
+func CacheCreation30mTokensEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldCacheCreation30mTokens, v))
+}
+
+// CacheCreation30mTokensNEQ applies the NEQ predicate on the "cache_creation_30m_tokens" field.
+func CacheCreation30mTokensNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldCacheCreation30mTokens, v))
+}
+
+// CacheCreation30mTokensIn applies the In predicate on the "cache_creation_30m_tokens" field.
+func CacheCreation30mTokensIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldCacheCreation30mTokens, vs...))
+}
+
+// CacheCreation30mTokensNotIn applies the NotIn predicate on the "cache_creation_30m_tokens" field.
+func CacheCreation30mTokensNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldCacheCreation30mTokens, vs...))
+}
+
+// CacheCreation30mTokensGT applies the GT predicate on the "cache_creation_30m_tokens" field.
+func CacheCreation30mTokensGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldCacheCreation30mTokens, v))
+}
+
+// CacheCreation30mTokensGTE applies the GTE predicate on the "cache_creation_30m_tokens" field.
+func CacheCreation30mTokensGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldCacheCreation30mTokens, v))
+}
+
+// CacheCreation30mTokensLT applies the LT predicate on the "cache_creation_30m_tokens" field.
+func CacheCreation30mTokensLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldCacheCreation30mTokens, v))
+}
+
+// CacheCreation30mTokensLTE applies the LTE predicate on the "cache_creation_30m_tokens" field.
+func CacheCreation30mTokensLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldCacheCreation30mTokens, v))
+}
+
+// CacheCreation12hTokensEQ applies the EQ predicate on the "cache_creation_12h_tokens" field.
+func CacheCreation12hTokensEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldCacheCreation12hTokens, v))
+}
+
+// CacheCreation12hTokensNEQ applies the NEQ predicate on the "cache_creation_12h_tokens" field.
+func CacheCreation12hTokensNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldCacheCreation12hTokens, v))
+}
+
+// CacheCreation12hTokensIn applies the In predicate on the "cache_creation_12h_tokens" field.
+func CacheCreation12hTokensIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldCacheCreation12hTokens, vs...))
+}
+
+// CacheCreation12hTokensNotIn applies the NotIn predicate on the "cache_creation_12h_tokens" field.
+func CacheCreation12hTokensNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldCacheCreation12hTokens, vs...))
+}
+
+// CacheCreation12hTokensGT applies the GT predicate on the "cache_creation_12h_tokens" field.
+func CacheCreation12hTokensGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldCacheCreation12hTokens, v))
+}
+
+// CacheCreation12hTokensGTE applies the GTE predicate on the "cache_creation_12h_tokens" field.
+func CacheCreation12hTokensGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldCacheCreation12hTokens, v))
+}
+
+// CacheCreation12hTokensLT applies the LT predicate on the "cache_creation_12h_tokens" field.
+func CacheCreation12hTokensLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldCacheCreation12hTokens, v))
+}
+
+// CacheCreation12hTokensLTE applies the LTE predicate on the "cache_creation_12h_tokens" field.
+func CacheCreation12hTokensLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldCacheCreation12hTokens, v))
 }
 
 // InputCostEQ applies the EQ predicate on the "input_cost" field.

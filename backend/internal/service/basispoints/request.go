@@ -109,6 +109,19 @@ func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, 
 	if text(source["previous_response_id"]) != "" {
 		return nil, nil, fmt.Errorf("basispoints requires expanded history instead of previous_response_id")
 	}
+	// Validate client compatibility values, but do not send service_tier to BPS:
+	// the current endpoint rejects this field, including auto and priority.
+	if value, exists := source["service_tier"]; exists && value != nil {
+		tier, ok := value.(string)
+		if !ok {
+			return nil, nil, fmt.Errorf("basispoints service_tier must be a string")
+		}
+		switch strings.ToLower(strings.TrimSpace(tier)) {
+		case "auto", "default", "priority", "fast":
+		default:
+			return nil, nil, fmt.Errorf("basispoints service_tier must be auto, default or priority")
+		}
+	}
 	requested := text(source["reasoning_effort"])
 	if reasoning, ok := source["reasoning"].(object); ok {
 		requested = text(reasoning["effort"])

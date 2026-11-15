@@ -44,6 +44,10 @@ func TestExcelBPSMessageImageForwardAndDisabledReplay(t *testing.T) {
 			raw := bytePolicyBody(t, 4, 1)
 			raw, err := sjson.SetBytes(raw, "stream", stream)
 			require.NoError(t, err)
+			// Upstream tier policy must survive our image preparation/reprepare,
+			// while the BPS wire omits the unsupported field on every replay.
+			raw, err = sjson.SetBytes(raw, "service_tier", "priority")
+			require.NoError(t, err)
 			original := bytes.Clone(raw)
 			svc := openAIClientToolsTestService(nil)
 			svc.cache = newImagePolicyMemoryCache()
@@ -74,6 +78,7 @@ func TestExcelBPSMessageImageForwardAndDisabledReplay(t *testing.T) {
 				body, e := io.ReadAll(req.Body)
 				require.NoError(t, e)
 				require.NotContains(t, string(body), "compaction_trigger")
+				require.False(t, gjson.GetBytes(body, "service_tier").Exists())
 				require.Contains(t, string(body), "file-history-small")
 				require.Contains(t, string(body), "file-current-original")
 				return bpsCompletionResponse(200, `data: {"type":"response.completed","response":{"id":"resp-images","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"continued"}]}],"usage":{"input_tokens":10,"output_tokens":2}}}`+"\n\n"), nil

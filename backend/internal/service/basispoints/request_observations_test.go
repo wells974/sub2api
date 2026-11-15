@@ -77,7 +77,7 @@ func TestArgumentObservationsPreserveErrorsAndRedactValues(t *testing.T) {
 		{"additional", `{"additionalProperties":false}`, `{"PRIVATE_KEY":"PRIVATE_VALUE"}`, "", "additionalProperties", "schema_validation"},
 		{"dynamic", `{"additionalProperties":{"type":"integer"}}`, `{"PRIVATE_KEY":"PRIVATE_VALUE"}`, "/[redacted]", "type", "schema_validation"},
 		{"nested", `{"properties":{"options":{"properties":{"count":{"type":"integer"}}}}}`, `{"options":{"count":"PRIVATE_VALUE"}}`, "/options/count", "type", "schema_validation"},
-		{"resource", `{"type":"object"}`, `{"count":1e99999}`, "", "", "resource_limit"},
+		{"resource", `{"type":"object"}`, `{"count":1e99999}`, "", "resource_limit", "resource_limit"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var schema object
@@ -89,7 +89,7 @@ func TestArgumentObservationsPreserveErrorsAndRedactValues(t *testing.T) {
 			_, bridge := mustPrepare(t, source, "observations", nil)
 			_, err := bridge.translateCall(nativeCall(object{"name": "functions.check", "arguments": tc.args}))
 			var schemaErr toolArgumentsSchemaError
-			if !errors.As(err, &schemaErr) || err.Error() != (toolArgumentsSchemaError{}).Error() || errors.Unwrap(schemaErr) != nil {
+			if !errors.As(err, &schemaErr) || schemaErr.Diagnostic == nil || strings.Contains(err.Error(), "PRIVATE_") || errors.Unwrap(schemaErr) != nil {
 				t.Fatalf("error contract changed: %v", err)
 			}
 			bridge.observeTerminalFailure(fmt.Errorf("wrapped: %w", err))

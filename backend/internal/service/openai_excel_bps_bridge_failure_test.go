@@ -115,3 +115,44 @@ func TestExcelBPSLocalProtocolFailureKeepsHTTPAndDiagnostic(t *testing.T) {
 		})
 	}
 }
+
+func TestExcelBPSToolArgumentsDiagnosticJSONAndSSE(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, mode := range []string{"neutral", "legacy"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", mode)
+			for _, stream := range []bool{false, true} {
+				t.Run(fmt.Sprint(stream), func(t *testing.T) {
+					wire := excelBPSRepairWire(t, "fixture", "Run", `{"name":"fixture_tool","arguments":{"count":"PRIVATE_ARGUMENT"}}`)
+					upstream := &httpUpstreamRecorder{responses: []*http.Response{bpsCompletionResponse(http.StatusOK, wire)}}
+					svc := openAIClientToolsTestService(upstream)
+					rec := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(rec)
+					c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+					_, err := svc.Forward(context.Background(), c, excelAccount(), []byte(fmt.Sprintf(`{"model":"gpt-6.1-sol","stream":%t,"input":"test","tools":[{"type":"function","name":"fixture_tool","parameters":{"type":"object","properties":{"count":{"type":"integer"}}}}]}`, stream)))
+					require.Error(t, err)
+					require.Len(t, upstream.requests, 1)
+					observed, ok := GetOpsStreamError(c)
+					require.True(t, ok)
+					require.NotNil(t, observed.BridgeFailure)
+					require.NotNil(t, observed.BridgeFailure.ToolArguments)
+					require.Equal(t, "type", observed.BridgeFailure.ToolArguments.Rule)
+					require.Equal(t, "/count", observed.BridgeFailure.ToolArguments.Path)
+					if mode == "legacy" {
+						require.Contains(t, rec.Body.String(), `"tool_arguments":`)
+						require.Contains(t, rec.Body.String(), `"rule":"type"`)
+					} else {
+						require.NotContains(t, rec.Body.String(), `"tool_arguments":`)
+						require.NotContains(t, rec.Body.String(), "basispoints")
+						require.NotContains(t, rec.Body.String(), "fixture_tool")
+					}
+					require.NotContains(t, rec.Body.String(), "PRIVATE_ARGUMENT")
+					if !stream {
+						require.Equal(t, http.StatusBadGateway, rec.Code)
+					}
+				})
+			}
+
+		})
+	}
+}

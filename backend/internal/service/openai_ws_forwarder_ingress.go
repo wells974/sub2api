@@ -708,6 +708,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		// Neither output absence nor transport failure authorizes account failover.
 		defer func() {
 			if smartStrict && returnErr != nil {
+				if _, _, _, unsent := OpenAIWSUnsentTurnPayload(returnErr); unsent {
+					return
+				}
 				var closeErr *OpenAIWSClientCloseError
 				if !errors.As(returnErr, &closeErr) {
 					returnErr = NewOpenAIWSClientCloseError(coderws.StatusInternalError, "upstream session ended; request was not replayed", nil)
@@ -876,6 +879,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 
 	parseClientPayload := func(turn int, raw []byte) (openAIWSClientPayload, error) {
 		clientPayloadRaw := append([]byte(nil), raw...)
+		prepared, prepareErr := agentRecovery.prepareReadable(account, raw)
+		if prepareErr != nil {
+			return openAIWSClientPayload{}, openAIWSAgentRecoveryClose(prepareErr)
+		}
+		raw = prepared
 		trimmed := bytes.TrimSpace(raw)
 		if len(trimmed) == 0 {
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "empty websocket request payload", nil)
@@ -935,7 +943,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if aliasErr != nil {
 				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, aliasErr.Error(), aliasErr)
 			}
-			updateCodexToolNameReverseForWSFrame(c, normalized, reverse)
+			if agentRecovery.readablePrepared() {
+				mergeCodexToolNameReverse(c, reverse)
+			} else {
+				updateCodexToolNameReverseForWSFrame(c, normalized, reverse)
+			}
 			if aliased {
 				normalized = aliasedBody
 			}
@@ -1266,6 +1278,12 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		preferredConnID = ""
 		storeDisabled = s.isOpenAIWSStoreDisabledInRequestRaw(payload.payloadRaw, account)
+		if recovery := openAIAgentRecoveryFromContext(ctx); recovery != nil && recovery.omittedHistory {
+			// A readable rebuild starts a new provider conversation. Keep the
+			// original client scope, but never revive A's cached socket/state.
+			turnState = ""
+			return
+		}
 		if useHTTPBridge {
 			// Sticky account affinity may be shared, but an HTTP bridge must not
 			// inherit another connection's native WS turn state or socket binding.
@@ -1358,7 +1376,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 						account.ID,
 						err,
 					)
-					return err
+					return openAIWSUnsentTurn(err, currentBridgePayload.clientPayloadRaw, currentBridgePayload.originalModel, turn)
 				}
 			}
 			if turnState != "" && c != nil && c.Request != nil {
@@ -1369,7 +1387,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			// 剥离本会话已知失效的加密项，阻断同一失效密文随历史反复触发上游拒绝。
 			// 历史序列须同步剥离，否则与已剥离的当前 input 项错位，prefix 复用失配。
-			if invalidDigests := s.sessionInvalidEncryptedContentDigests(groupID, openAIEncryptedLineageKey(c, account.ID, sessionHash)); len(invalidDigests) > 0 {
+			if invalidDigests := s.sessionInvalidEncryptedContentDigests(groupID, openAIEncryptedLineageKey(c, account.ID, sessionHash)); len(invalidDigests) > 0 && !s.preserveOpenAIAgentHistory(currentBridgePayload.clientPayloadRaw) {
 				strippedPayload, strippedCount := s.stripSessionInvalidEncryptedContentLogged(
 					currentBridgePayload.payloadRaw, invalidDigests, "ingress_ws_http_bridge_invalid_encrypted_lineage_strip", account.ID, turn,
 				)
@@ -1843,6 +1861,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				admissionErr,
 			)
 			lease.MarkBroken()
+			if latencyGenerationStartedTurn != turn {
+				admissionErr = openAIWSUnsentTurn(admissionErr, clientPayload, originalModel, turn)
+			}
 			return nil, admissionErr
 		}
 		turnStart := requesttiming.Now(ctx)
@@ -1988,8 +2009,12 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if eventType == "response.failed" && isOpenAIInvalidEncryptedContentSSE(upstreamMessage, eventType) {
 				s.markOpenAIWSInvalidEncryptedContentLineageFromPayload(c, payload, "ingress_ws_invalid_encrypted_lineage_mark", account.ID, turn, upstreamMessage)
 			}
+			// Captured before this frame is written. The terminal handler below runs
+			// after the write, and the failure frame itself must not count as output.
+			turnOutputStarted := wroteDownstream
 			if eventType == "error" {
-				s.handleOpenAIWSErrorEventTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), upstreamMessage)
+				eventCtx := openAIWSForwardStreamPhaseContext(openAI429LeaseObservation(ctx, lease), turnOutputStarted, upstreamMessage)
+				s.handleOpenAIWSErrorEventTransientFailure(eventCtx, account, mappedModel, lease.HandshakeHeaders(), upstreamMessage)
 				errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(upstreamMessage)
 				statusCode := openAIWSRejectedFieldRetryHTTPStatus(upstreamMessage)
 				if !smartStrict && OpenAIWSAgentRecoveryCanRetry(ctx) && !wroteDownstream && statusCode == http.StatusBadRequest && rejectedFieldRetryState != nil {
@@ -2015,7 +2040,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 						}
 					}
 				}
-				s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw, mappedModel)
+				s.persistOpenAIWSRateLimitSignal(eventCtx, account, lease.HandshakeHeaders(), upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw, mappedModel)
 				fallbackReason, _ := classifyOpenAIWSErrorEventFromRaw(errCodeRaw, errTypeRaw, errMsgRaw)
 				if fallbackReason == openAIWSFallbackReasonInvalidEncryptedContent {
 					// 记录被上游拒绝的密文摘要；错误照旧透传，下一轮进场时按摘要预剥离。
@@ -2098,7 +2123,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if isTerminalEvent {
 				terminalEventCount++
 			}
-			if firstTokenMs == nil && openai.ResponseStartsSemanticOutput(upstreamMessage, eventType) {
+			if firstTokenMs == nil && openAIWSFirstTokenEventFunc(s.openAITTFTMode(ctx))(eventType, upstreamMessage) {
 				ms := int(requesttiming.Now(ctx).Sub(turnStart).Milliseconds())
 				firstTokenMs = &ms
 			}
@@ -2157,7 +2182,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 			}
 			if isTerminalEvent {
-				terminalEvent := s.handleOpenAIWSTerminalTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), upstreamMessage)
+				terminalEvent := s.handleOpenAIWSTerminalTransientFailure(openAIWSForwardStreamPhaseContext(openAI429LeaseObservation(ctx, lease), turnOutputStarted, upstreamMessage), account, mappedModel, lease.HandshakeHeaders(), upstreamMessage)
 				// 客户端已断连时，上游连接的 session 状态不可信，标记 broken 避免回池复用。
 				if clientDisconnected {
 					lease.MarkBroken()
@@ -2209,7 +2234,12 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					UpstreamProtocol:              "ws",
 				}
 				applyOpenAIQueueTiming(result, turnArrivedAt, turnStart, turnStart, "ws_frame_ctx_pool", "pre_final_forward")
-				if replayInput := replayCollector.Items(); len(replayInput) > 0 {
+				replayInput := replayCollector.Items()
+				if account.IsOpenAIOAuthLike() && lease.initializedWithoutWebSearch() {
+					// Keep complete output while search activation can require a new socket.
+					replayInput = replayCollector.AllItems()
+				}
+				if len(replayInput) > 0 {
 					result.wsReplayInput = replayInput
 					result.wsReplayInputExists = true
 				}
@@ -2291,6 +2321,15 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	defer releaseSessionLease()
 
 	turn := 1
+	defer func() {
+		var failoverErr *UpstreamFailoverError
+		if turn > 1 && errors.As(returnErr, &failoverErr) {
+			// Native ingress does not retain a complete conversation for account
+			// migration. A nil current-turn payload makes the handler close the
+			// client connection instead of replaying its original first message.
+			returnErr = newOpenAIWSCurrentTurnFailoverError(returnErr, nil)
+		}
+	}()
 	rejectedFieldRetryState = newOpenAIResponsesRejectedFieldRetryState(currentPayload)
 	turnRetry := 0
 	turnPrevRecoveryTried := false
@@ -2301,6 +2340,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	var lastTurnStrictState *openAIWSIngressPreviousTurnStrictState
 	lastTurnReplayInput := []json.RawMessage(nil)
 	lastTurnReplayInputExists := false
+	lastTurnReplayInputComplete := false
 	currentTurnReplayInput := []json.RawMessage(nil)
 	currentTurnReplayInputExists := false
 	skipBeforeTurn := false
@@ -2440,6 +2480,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				account.ID,
 				err,
 			)
+			if latencyGenerationStartedTurn != turn {
+				return openAIWSUnsentTurn(err, currentClientPayload, currentOriginalModel, turn)
+			}
 			return err
 		}
 		if turn > 1 && !skipBeforeTurn && hooks != nil {
@@ -2463,7 +2506,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					account.ID,
 					err,
 				)
-				return err
+				return openAIWSUnsentTurn(err, currentClientPayload, currentOriginalModel, turn)
 			}
 		}
 		if !skipBeforeTurn {
@@ -2480,7 +2523,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		skipBeforeTurn = false
 		// 剥离本会话已知失效的加密项，阻断同一失效密文随历史反复触发上游拒绝。
 		// 历史序列须同步剥离，否则与已剥离的当前 input 项错位，prefix 复用失配。
-		if invalidDigests := s.sessionInvalidEncryptedContentDigests(groupID, openAIEncryptedLineageKey(c, account.ID, sessionHash)); len(invalidDigests) > 0 {
+		if invalidDigests := s.sessionInvalidEncryptedContentDigests(groupID, openAIEncryptedLineageKey(c, account.ID, sessionHash)); len(invalidDigests) > 0 && !s.preserveOpenAIAgentHistory(currentPayload) {
 			strippedPayload, strippedCount := s.stripSessionInvalidEncryptedContentLogged(
 				currentPayload, invalidDigests, "ingress_ws_invalid_encrypted_lineage_strip", account.ID, turn,
 			)
@@ -2515,6 +2558,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		currentPreviousResponseID := openAIWSPayloadStringFromRaw(currentPayload, "previous_response_id")
 		expectedPrev := strings.TrimSpace(lastTurnResponseID)
+		if agentRecovery.readablePrepared() {
+			// Paired completed tools are explicit in the rebuilt input. Never
+			// reattach a provider pointer that the authorized rebuild removed.
+			expectedPrev = ""
+		}
 		if contextWindowBoundary.Changed {
 			// A context-window rollover is a new Responses root. Do not infer a
 			// continuation anchor from the response produced in the old window.
@@ -2568,6 +2616,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			currentPayload,
 			currentPreviousResponseID != "",
 		)
+		currentTurnReplayInputComplete := replayInputErr == nil && (currentPreviousResponseID == "" ||
+			(lastTurnReplayInputComplete && currentPreviousResponseID == lastTurnResponseID))
 		if replayInputErr != nil {
 			logOpenAIWSModeInfo(
 				"ingress_ws_replay_input_skip account_id=%d turn=%d conn_id=%s reason=build_error cause=%s",
@@ -2699,6 +2749,31 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if !ok || bound != sessionConnID {
 				return wsNodeOwnerRejection()
 			}
+		}
+		if account.IsOpenAIOAuthLike() && sessionLease.initializedWithoutWebSearch() && openAIWSWebSearchDeclared(currentPayload) {
+			if ownerProtected || smartStrict || !OpenAIWSAgentRecoveryCanRetry(ctx) {
+				return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "web search activation cannot replay protected continuation", nil)
+			}
+			fullPayload, safe, err := buildOpenAIWSCurrentTurnRetryPayload(currentPayload, currentTurnReplayInput, currentTurnReplayInputExists, "")
+			if err != nil {
+				return fmt.Errorf("rebuild websocket input for web search activation: %w", err)
+			}
+			if !safe || !currentTurnReplayInputComplete {
+				return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "web search activation requires complete input history; please reconnect with full input", nil)
+			}
+			logOpenAIWSModeInfo("ingress_ws_web_search_activation account_id=%d turn=%d action=reconnect", account.ID, turn)
+			resetSessionLease(true)
+			acquiredLease, acquireErr := acquireTurnLease(turn, "", false, true)
+			if acquireErr != nil {
+				return fmt.Errorf("acquire upstream websocket for web search activation: %w", acquireErr)
+			}
+			sessionLease = acquiredLease
+			sessionConnID = strings.TrimSpace(sessionLease.ConnID())
+			pinSessionConn(sessionConnID)
+			currentPayload = fullPayload
+			currentPayloadBytes = len(fullPayload)
+			currentPreviousResponseID = ""
+			forcePreferredConn = false
 		}
 		shouldPreflightPing := turn > 1 && sessionLease != nil && sessionLease.SupportsIdlePingWithoutReader() && turnRetry == 0
 		if shouldPreflightPing && openAIWSIngressPreflightPingIdle > 0 && !lastTurnFinishedAt.IsZero() {
@@ -2844,6 +2919,13 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		if relayErr != nil {
 			lastTurnClean = false
+			if _, _, _, unsent := OpenAIWSUnsentTurnPayload(relayErr); unsent {
+				sessionLease.MarkBroken()
+				if hooks != nil && hooks.AfterTurn != nil {
+					hooks.AfterTurn(turn, nil, relayErr)
+				}
+				return relayErr
+			}
 			if isOpenAIWSSessionPreempted(ctx) {
 				sessionLease.MarkBroken()
 				return errOpenAIWSSessionPreempted
@@ -2935,6 +3017,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		// collector 增量经 combine 合并（新头数组）。
 		lastTurnReplayInput = currentTurnReplayInput
 		lastTurnReplayInputExists = currentTurnReplayInputExists
+		lastTurnReplayInputComplete = currentTurnReplayInputComplete
 		if result.wsReplayInputExists {
 			lastTurnReplayInput = combineOpenAIWSReplayItems(lastTurnReplayInput, result.wsReplayInput)
 			lastTurnReplayInputExists = true

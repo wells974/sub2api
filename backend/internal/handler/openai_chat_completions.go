@@ -51,6 +51,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
+		if middleware2.RejectRequestBodyReadError(c, err) {
+			return
+		}
 		if maxErr, ok := extractMaxBytesError(err); ok {
 			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return
@@ -287,6 +290,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			}()
 			return h.gatewayService.ForwardAsChatCompletions(rpmAdmission.forwardContext(c.Request.Context(), account), c, account, forwardBody, promptCacheKey, "")
 		}()
+		if service.IsUpstreamModerationDenied(err) {
+			return
+		}
 		if retryOpenAIInitialAdmission(c, err, result, body, account.ID, failedAccountIDs, &switchCount, maxAccountSwitches) {
 			lastAdmissionErr = err
 			reqLog.Info("openai_chat_completions.admission_reselecting", zap.Int64("account_id", account.ID), zap.Int("switch_count", switchCount))

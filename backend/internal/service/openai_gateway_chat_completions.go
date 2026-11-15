@@ -62,6 +62,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+
 	admittedCtx, admissionErr := s.beginPriorityLatencyTurn(ctx, c, account, gjson.GetBytes(body, "model").String())
 	if admissionErr != nil {
 		return nil, admissionErr
@@ -108,6 +109,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return nil, admissionErr
 	}
 	account = latest
+	if err := CheckUpstreamModeration(ctx, c, account); err != nil {
+		return nil, err
+	}
 	rememberOpenCodeInboundBody(c, body)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
@@ -205,7 +209,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	// derive a stable seed from the final upstream model family.
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
-	if err := validateGPT61SolCompatRequest(body, upstreamModel); err != nil {
+	if err := validateGPT61CompatRequest(body, upstreamModel); err != nil {
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, err
 	}
@@ -850,6 +854,9 @@ func (s *OpenAIGatewayService) newOpenAICompatBufferedReadFailoverError(
 		return err
 	}
 
+	if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, requestID, readErr.cause); handled {
+		return resetErr
+	}
 	classifiedErr := newOpenAIUpstreamStreamReadError(readErr.cause)
 	code, message, ok := OpenAIUpstreamStreamReadErrorDetails(classifiedErr)
 	if !ok {
@@ -1273,6 +1280,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			if clientDisconnected || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
 			}
+			if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, requestID, err); handled {
+				return resultWithUsage(), resetErr
+			}
 			return resultWithUsage(), newOpenAIUpstreamStreamReadError(err)
 		}
 		if frame, ok := parser.Finish(); ok {
@@ -1347,6 +1357,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				handleScanErr(ev.err)
 				if clientDisconnected || errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
 					return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", ev.err)
+				}
+				if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, requestID, ev.err); handled {
+					return resultWithUsage(), resetErr
 				}
 				return resultWithUsage(), newOpenAIUpstreamStreamReadError(ev.err)
 			}

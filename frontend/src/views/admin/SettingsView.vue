@@ -53,6 +53,12 @@
                 />
                 <NewFeatureBadge
                   v-if="tab.key === 'gateway'"
+                  :notice-id="NEW_FEATURE_NOTICES.openai409OmitEncryptedHistory"
+                  :user-id="authStore.user?.id"
+                  class="settings-tab-badge"
+                />
+                <NewFeatureBadge
+                  v-if="tab.key === 'gateway'"
                   :notice-id="NEW_FEATURE_NOTICES.deepSeekSearch"
                   :user-id="authStore.user?.id"
                   class="settings-tab-badge"
@@ -5527,6 +5533,15 @@
                   />
                 </div>
 
+              <EncryptedHistory409Settings
+                v-model="form.openai_409_omit_encrypted_history_enabled"
+                :user-id="authStore.user?.id"
+              />
+              <EncryptedHistory400Settings
+                v-model="form.openai_400_omit_encrypted_history_enabled"
+                :user-id="authStore.user?.id"
+              />
+
               <!-- OpenAI Responses 首 token 统计 -->
               <div class="border-b border-gray-100 pb-5 dark:border-dark-700 md:col-span-2">
                 <label
@@ -8663,8 +8678,8 @@
                           ) || 1
                       "
                       type="number"
-                      step="0.01"
-                      min="0.01"
+                      step="0.000001"
+                      min="0.000001"
                       class="input"
                     />
                     <p class="mt-0.5 text-xs text-gray-400">
@@ -8679,10 +8694,10 @@
                     >
                       {{
                         t("admin.settings.payment.balanceRechargePreview", {
-                          usd: (
+                          usd: formatBalanceRechargeMultiplier(
                             Number(form.payment_balance_recharge_multiplier) ||
-                            1
-                          ).toFixed(2),
+                              1,
+                          ),
                         })
                       }}
                     </p>
@@ -8722,6 +8737,7 @@
                     <div class="relative">
                       <input
                         :value="form.payment_recharge_fee_rate ?? ''"
+                        data-testid="payment-global-fee-rate"
                         @input="
                           form.payment_recharge_fee_rate = Math.min(
                             100,
@@ -9062,6 +9078,7 @@
           <PaymentProviderList
             v-if="form.payment_enabled"
             :providers="providers"
+            :global-fee-rate="savedPaymentFeeRate"
             :loading="providersLoading"
             :can-create="hasAnyPaymentTypeEnabled"
             :enabled-payment-types="form.payment_enabled_types"
@@ -9511,8 +9528,9 @@
           <BackupSettings />
         </div>
 
-        <!-- Save Button -->
-        <div v-show="activeTab !== 'backup'" class="flex justify-end">
+        <!-- Save dock — sticky so long tabs never require scrolling to the end -->
+        <div v-show="activeTab !== 'backup'" class="settings-save-dock">
+          <NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.settingsSaveDock" :user-id="authStore.user?.id" />
           <button
             type="submit"
             :disabled="saving || loadFailed"
@@ -9553,6 +9571,7 @@
         :show="showProviderDialog"
         :saving="providerSaving"
         :editing="editingProvider"
+        :global-fee-rate="savedPaymentFeeRate"
         :all-key-options="providerKeyOptions"
         :enabled-key-options="enabledProviderKeyOptions"
         :all-payment-types="allPaymentTypes"
@@ -9586,6 +9605,8 @@
 </template>
 
 <script setup lang="ts">
+import EncryptedHistory409Settings from "@/components/settings/EncryptedHistory409Settings.vue";
+import EncryptedHistory400Settings from "@/components/settings/EncryptedHistory400Settings.vue";
 import { excelBPSImageLimits } from "@/utils/excelBPSImageLimits";
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import { listPlatformIds } from "@/constants/platformCatalog";
@@ -9677,6 +9698,7 @@ import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 import { affiliatesAPI, type AffiliateAdminEntry, type SimpleUser as AffiliateSimpleUser } from "@/api/admin/affiliates";
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";
 import { useAppStore, useAuthStore } from "@/stores";
+import { formatBalanceRechargeMultiplier } from "@/utils/rechargeBonus";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
 import BalanceForecastSettings from "@/components/settings/BalanceForecastSettings.vue";
 import SmartOpsSidebarSettings from "@/components/settings/SmartOpsSidebarSettings.vue";
@@ -10631,6 +10653,8 @@ const form = reactive<SettingsForm>({
   grok_cross_client_model_map_enabled: false,
   grok_default_base_url_mode: "cli",
   grok_video_source_url_enabled: false,
+  openai_409_omit_encrypted_history_enabled: false,
+  openai_400_omit_encrypted_history_enabled: false,
   // Identity patch (Claude -> Gemini)
   enable_identity_patch: true,
   identity_patch_prompt: "",
@@ -11728,6 +11752,7 @@ async function loadSettings() {
   loadFailed.value = false;
   try {
     const settings = await adminAPI.settings.getSettings();
+    savedPaymentFeeRate.value = settings.payment_recharge_fee_rate ?? 0;
     settings.balance_forecast_enabled ??= false;
     settings.balance_forecast_threshold_hours ??= 12;
     settings.balance_forecast_max_notifications ??= 3;
@@ -12400,6 +12425,8 @@ async function saveSettings() {
         form.grok_cross_client_model_map_enabled,
       grok_default_base_url_mode: form.grok_default_base_url_mode,
       grok_video_source_url_enabled: form.grok_video_source_url_enabled,
+      openai_409_omit_encrypted_history_enabled: form.openai_409_omit_encrypted_history_enabled,
+      openai_400_omit_encrypted_history_enabled: form.openai_400_omit_encrypted_history_enabled,
       enable_identity_patch: form.enable_identity_patch,
       identity_patch_prompt: form.identity_patch_prompt,
       min_claude_code_version: form.min_claude_code_version,
@@ -12632,6 +12659,7 @@ async function saveSettings() {
     const updated = await settingsStepUp.run(() =>
       adminAPI.settings.updateSettings(payload),
     );
+    savedPaymentFeeRate.value = updated.payment_recharge_fee_rate ?? savedPaymentFeeRate.value;
     adminSettingsStore.smartOpsHiddenMenuItems = [...(updated.smart_ops_hidden_menu_items ?? DEFAULT_SMART_OPS_HIDDEN_MENU_ITEMS)];
     for (const [key, value] of Object.entries(updated)) {
       if (key === "openai_fast_policy_settings") continue;
@@ -13442,6 +13470,8 @@ function slog(...args: unknown[]) {
 const providersLoading = ref(false);
 const providerSaving = ref(false);
 const providers = ref<ProviderInstance[]>([]);
+// Provider dialogs save independently; unsaved global form edits are not effective rates.
+const savedPaymentFeeRate = ref<number>();
 const showProviderDialog = ref(false);
 const showDeleteProviderDialog = ref(false);
 const editingProvider = ref<ProviderInstance | null>(null);
@@ -14252,6 +14282,14 @@ h2[id^="settings-section-"]:target {
 .settings-tab-badge {
   @apply -ml-0.5 mr-0.5;
 }
+
+/* ============ 系统设置 保存浮标 ============ */
+.settings-save-dock {
+  @apply sticky bottom-3 z-20 ml-auto flex w-fit items-center rounded-full border border-white/80 bg-white/90 p-1.5 backdrop-blur-xl;
+  box-shadow:
+    0 10px 26px rgb(15 23 42 / 0.12),
+    0 1px 0 rgb(255 255 255 / 0.9) inset;
+}
 </style>
 
 <style>
@@ -14274,5 +14312,13 @@ h2[id^="settings-section-"]:target {
   box-shadow:
     0 12px 26px rgb(0 0 0 / 0.22),
     0 1px 0 rgb(255 255 255 / 0.08) inset;
+}
+
+.dark .settings-save-dock {
+  border-color: rgb(51 65 85 / 0.65);
+  background: rgb(15 23 42 / 0.86);
+  box-shadow:
+    0 14px 32px rgb(0 0 0 / 0.34),
+    0 1px 0 rgb(255 255 255 / 0.06) inset;
 }
 </style>

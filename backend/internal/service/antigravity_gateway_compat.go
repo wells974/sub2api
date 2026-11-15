@@ -59,6 +59,10 @@ func (s *AntigravityGatewayService) ForwardAsChatCompletions(
 	body []byte,
 	_ *ParsedRequest,
 ) (*ForwardResult, error) {
+	if err := CheckUpstreamModeration(ctx, c, account); err != nil {
+		return nil, err
+	}
+
 	if err := s.validateAntigravityCompatAccount(c, account); err != nil {
 		return nil, err
 	}
@@ -106,6 +110,10 @@ func (s *AntigravityGatewayService) ForwardAsResponses(
 	body []byte,
 	_ *ParsedRequest,
 ) (*ForwardResult, error) {
+	if err := CheckUpstreamModeration(ctx, c, account); err != nil {
+		return nil, err
+	}
+
 	if err := s.validateAntigravityCompatAccount(c, account); err != nil {
 		return nil, err
 	}
@@ -273,7 +281,7 @@ func (s *AntigravityGatewayService) buildAntigravityCompatGeminiBody(
 	mappedModel string,
 ) ([]byte, error) {
 	if strings.HasPrefix(strings.ToLower(mappedModel), "gemini-") {
-		body, err := convertClaudeMessagesToGeminiGenerateContent(claudeBody)
+		body, err := convertClaudeMessagesToGeminiGenerateContent(claudeBody, mappedModel)
 		if err != nil {
 			return nil, err
 		}

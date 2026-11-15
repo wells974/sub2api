@@ -1,6 +1,6 @@
 # BPS 请求诊断（第一批）
 
-本批只增加服务端观测。图片限额、上传及去重、Schema 校验规则、工具目录选择、重试、HTTP/SSE 错误和用量计算均保持现状。
+初始批次只增加服务端观测。合入 v2.21.3 后，参数错误的提取与 JSON/SSE 诊断统一采用上游实现，内部观测和一次 Schema 纠错通过适配层复用同一条诊断；对外错误仍受本 fork 的 neutral/legacy 展示设置控制。
 
 后续第二批的预算配置、提前压缩和可选截图裁剪见 [IMAGE_BUDGET.md](IMAGE_BUDGET.md)。
 
@@ -58,16 +58,17 @@ Base64 字节数通过编码字符及 padding 计算，兼容 CR/LF，不额外�
 - `schema_phase: catalog_compile`：把已有 `ToolSchemaValidationError` 的工具、路径、原因写入 `schema_tool`、`schema_path`、`schema_reason`；客户端错误保持原样。
 - `schema_phase: tool_arguments`：只在桥接器最终发出协议失败时，记录 `schema_failure`，避免把内部试探校验误报为请求失败。
 
-`schema_failure` 包含 `tool`、`path`（实例 JSON Pointer）、`keyword`、`reason`。`reason` 区分 `schema_validation` 和 `resource_limit`。类型错误另有 `expected_types`、`actual_type`；required 错误的 `missing` 最多记录 8 个 Schema 字段名。资源预算失败不猜测路径或关键字。
+`schema_failure` 包含 `tool`、`path`（实例 JSON Pointer）、`keyword`、`reason`。`reason` 区分 `schema_validation` 和 `resource_limit`。类型错误另有 `expected_types`、`actual_type`；required 错误的 `missing` 最多记录 8 个 Schema 字段名。这些补充字段仅用于内部观测和纠错，不增加上游公开诊断的字段。资源预算失败不猜测路径，关键字为 `resource_limit`。
 
-诊断只选校验树第一条叶子，不是全部错误列表，也不自动修复参数。直接 Schema 中无法确认的属性（含动态键和间接结构）显示为 `[redacted]`；路径长度受限。记录声明的安全标识符，不记录参数值、枚举值、Schema 正文、提示词、图片载荷/URL、凭据或原始校验器错误。
+诊断沿用上游选择规则，只穿过透明包装，保留 `oneOf`/`anyOf` 等组合规则，不把任意一个失败分支当成唯一要求；不枚举全部错误。直接 Schema 中无法确认的属性（含动态键和间接结构）显示为 `[redacted]`；明确数组索引可保留，路径长度受限。记录声明的安全标识符，不记录参数值、枚举值、Schema 正文、提示词、图片载荷/URL、凭据或原始校验器错误。
 
 ## 二开维护边界
 
 新增实现集中在：
 
 - `backend/internal/service/basispoints/image_observations.go`：独立图片统计。
-- `backend/internal/service/basispoints/argument_observations.go`：校验错误转为有界诊断。
+- `backend/internal/service/basispoints/tool_arguments_diagnostic.go`：上游统一的规则选择、路径脱敏与公开诊断。
+- `backend/internal/service/basispoints/argument_observations.go`：将已选诊断适配为内部观测和纠错信息，不再单独遍历校验树。
 - `backend/internal/service/basispoints/bridge_observations.go`：目录统计与并发安全快照。
 - `backend/internal/service/openai_excel_bps_diagnostics.go`：日志汇总，不依赖 Gin 或响应写入器。
 

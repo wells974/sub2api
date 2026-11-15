@@ -252,7 +252,7 @@ func (b *Bridge) translateCompletedWithSchema(ctx context.Context, response obje
 	for i, after := range items {
 		before := original[i]
 		if after.issue != nil {
-			return fmt.Errorf("basispoints schema correction remains invalid; no tool was executed: %w", toolArgumentsSchemaError{diagnostic: after.issue})
+			return fmt.Errorf("basispoints schema correction remains invalid; no tool was executed: %w", toolArgumentsSchemaError{Diagnostic: after.issue.toolArgumentsDiagnostic(), diagnostic: after.issue})
 		}
 		if after.target != before.target || oldIDs[text(after.native["id"])] || oldCalls[text(after.native["call_id"])] {
 			return fmt.Errorf("basispoints schema correction changed a target or reused an identity; no tool was executed")

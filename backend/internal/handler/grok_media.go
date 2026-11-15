@@ -94,6 +94,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	if endpoint.RequiresRequestBody() {
 		body, err = pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
 		if err != nil {
+			if middleware2.RejectRequestBodyReadError(c, err) {
+				return
+			}
 			if maxErr, ok := extractMaxBytesError(err); ok {
 				h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 				return
@@ -422,6 +425,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			}
 			return h.gatewayService.ForwardGrokMedia(requestCtx, c, account, endpoint, requestID, body, contentType)
 		}()
+		if service.IsUpstreamModerationDenied(err) {
+			return
+		}
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)

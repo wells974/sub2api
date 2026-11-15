@@ -272,6 +272,9 @@
         </div>
       </div>
 
+      <QwenPlatformNotice :user-id="authStore.user?.id" />
+      <QwenCacheSettings v-if="form.platform === 'qwen'" v-model:session-cache="qwenSessionCache" v-model:strict-affinity="qwenStrictAffinity" :user-id="authStore.user?.id" @base-url="setQwenBaseUrl" />
+
       <!-- Account Type Selection (Anthropic) -->
       <div v-if="form.platform === 'anthropic'">
         <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
@@ -2764,6 +2767,7 @@
                     class="input"
                     :placeholder="t('admin.accounts.tempUnschedulable.durationPlaceholder')"
                   />
+                  <p class="input-hint">{{ t('admin.accounts.tempUnschedulable.durationHint') }}</p>
                 </div>
                 <div class="sm:col-span-2">
                   <label class="input-label">{{ t('admin.accounts.tempUnschedulable.scope') }}</label>
@@ -2802,6 +2806,72 @@
                     </button>
                   </div>
                   <p class="input-hint">{{ t('admin.accounts.tempUnschedulable.scopeHint') }}</p>
+                </div>
+                <div class="sm:col-span-2">
+                  <div class="flex items-center gap-2">
+                    <label class="input-label">{{ t('admin.accounts.tempUnschedulable.streamTiming') }}</label>
+                    <NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.tempUnschedStreamCountWindow" :user-id="authStore.user?.id" />
+                  </div>
+                  <div
+                    class="grid grid-cols-1 gap-2 sm:grid-cols-2"
+                    role="radiogroup"
+                    :aria-label="t('admin.accounts.tempUnschedulable.streamTiming')"
+                  >
+                    <button
+                      v-for="option in tempUnschedStreamTimingOptions"
+                      :key="option.value"
+                      type="button"
+                      role="radio"
+                      :aria-checked="rule.stream_timing === option.value"
+                      :data-testid="`temp-unsched-stream-${option.value}`"
+                      @click="rule.stream_timing = option.value"
+                      :class="[
+                        'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+                        rule.stream_timing === option.value
+                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                          : 'border-gray-200 hover:border-gray-400 dark:border-dark-600 dark:hover:border-gray-600'
+                      ]"
+                    >
+                      <span
+                        :class="[
+                          'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2',
+                          rule.stream_timing === option.value ? 'border-primary-500' : 'border-gray-300 dark:border-dark-500'
+                        ]"
+                      >
+                        <span v-if="rule.stream_timing === option.value" class="h-1.5 w-1.5 rounded-full bg-primary-500" />
+                      </span>
+                      <span>
+                        <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ option.label }}</span>
+                        <span class="text-xs text-gray-500 dark:text-gray-400">{{ option.description }}</span>
+                      </span>
+                    </button>
+                  </div>
+                  <p class="input-hint">{{ t('admin.accounts.tempUnschedulable.streamTimingHint') }}</p>
+                </div>
+                <div class="sm:col-span-2">
+                  <label class="input-label">{{ t('admin.accounts.tempUnschedulable.triggerCount') }}</label>
+                  <input
+                    v-model.number="rule.trigger_count"
+                    type="number"
+                    min="1"
+                    max="1000"
+                    class="input"
+                    data-testid="temp-unsched-trigger-count"
+                    :placeholder="t('admin.accounts.tempUnschedulable.triggerCountPlaceholder')"
+                  />
+                  <p class="input-hint">{{ t('admin.accounts.tempUnschedulable.triggerCountHint') }}</p>
+                </div>
+                <div class="sm:col-span-2">
+                  <label class="input-label">{{ t('admin.accounts.tempUnschedulable.triggerWindowMinutes') }}</label>
+                  <input
+                    v-model.number="rule.trigger_window_minutes"
+                    type="number"
+                    min="1"
+                    class="input"
+                    data-testid="temp-unsched-trigger-window"
+                    :placeholder="t('admin.accounts.tempUnschedulable.triggerWindowPlaceholder')"
+                  />
+                  <p class="input-hint">{{ t('admin.accounts.tempUnschedulable.triggerWindowHint') }}</p>
                 </div>
                 <div class="sm:col-span-2">
                   <label class="input-label">{{ t('admin.accounts.tempUnschedulable.keywords') }}</label>
@@ -4231,6 +4301,9 @@
 </template>
 
 <script setup lang="ts">
+import QwenPlatformNotice from '@/components/common/QwenPlatformNotice.vue'
+import QwenCacheSettings from './QwenCacheSettings.vue'
+import { applyQwenCacheSettings } from './qwenCacheSettings'
 import OpenAIRequestTimezoneField from '@/components/account/OpenAIRequestTimezoneField.vue'
 import ExtraImageModelsField from '@/components/account/ExtraImageModelsField.vue'
 import { parseExtraImageModels } from '@/utils/extraImageModels'
@@ -4277,7 +4350,8 @@ import type {
   OpenAICompactMode,
   OpenAIResponsesMode,
   OpenAIEndpointCapability,
-  TempUnschedulableScope
+  TempUnschedulableScope,
+  TempUnschedulableStreamTiming
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import UpstreamChannelSelector from './UpstreamChannelSelector.vue'
@@ -4286,6 +4360,8 @@ import type { CodexSessionImportRequest as UpstreamImportRequest, OpenAICodexPAT
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
+import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
+import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -4530,6 +4606,9 @@ interface TempUnschedRuleForm {
   description: string
   // 作用范围：account 暂停整个账号，model 只冷却本次请求的模型。
   scope: TempUnschedulableScope
+  stream_timing: TempUnschedulableStreamTiming
+  trigger_count: number
+  trigger_window_minutes: number
 }
 
 // State
@@ -4538,6 +4617,7 @@ const openaiTwoFA = ref(false)
 const openaiBPSOAuth = ref(false)
 const bpsOAuthModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
 const isOpenAIBPSOAuth = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiBPSOAuth.value)
+// Includes unresolved login ownership while the importer is paused for Retry.
 const twoFABusy = ref(false)
 const isOpenAITwoFA = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiTwoFA.value)
 // 「降智后自动开启 BPS」：OpenAI OAuth / 2FA 添加时可选，账号建好后按这里的设置给每个新账号建一条质量运维规则。
@@ -4820,6 +4900,12 @@ const customErrorCodesEnabled = ref(false)
 const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
 const headerOverrideEnabled = ref(false)
+const qwenSessionCache = ref(false)
+const qwenStrictAffinity = ref(false)
+const setQwenBaseUrl = (value: string) => {
+  apiKeyBaseUrl.value = value
+  adaptiveBaseUrls.value.chat_completions = value
+}
 const headerOverrideRows = ref<HeaderOverrideRow[]>([])
 
 // Grok OAuth：自定义上游地址（base_url 仅改写转发端点，OAuth 授权/刷新不受影响）
@@ -5166,6 +5252,18 @@ const tempUnschedScopeOptions = computed<Array<{ value: TempUnschedulableScope; 
     description: t('admin.accounts.tempUnschedulable.scopeAccountDesc')
   }
 ])
+const tempUnschedStreamTimingOptions = computed<Array<{ value: TempUnschedulableStreamTiming; label: string; description: string }>>(() => [
+  {
+    value: 'before_stream',
+    label: t('admin.accounts.tempUnschedulable.streamTimingBefore'),
+    description: t('admin.accounts.tempUnschedulable.streamTimingBeforeDesc')
+  },
+  {
+    value: 'after_stream',
+    label: t('admin.accounts.tempUnschedulable.streamTimingAfter'),
+    description: t('admin.accounts.tempUnschedulable.streamTimingAfterDesc')
+  }
+])
 
 const tempUnschedPresets = computed(() => [
   {
@@ -5175,7 +5273,10 @@ const tempUnschedPresets = computed(() => [
       keywords: 'overloaded, too many',
       duration_minutes: 60,
       description: t('admin.accounts.tempUnschedulable.presets.overloadDesc'),
-      scope: 'model' as const
+      scope: 'model' as const,
+      stream_timing: 'after_stream' as const,
+      trigger_count: 1,
+      trigger_window_minutes: 5
     }
   },
   {
@@ -5185,7 +5286,10 @@ const tempUnschedPresets = computed(() => [
       keywords: 'rate limit, too many requests',
       duration_minutes: 10,
       description: t('admin.accounts.tempUnschedulable.presets.rateLimitDesc'),
-      scope: 'model' as const
+      scope: 'model' as const,
+      stream_timing: 'after_stream' as const,
+      trigger_count: 1,
+      trigger_window_minutes: 5
     }
   },
   {
@@ -5195,7 +5299,10 @@ const tempUnschedPresets = computed(() => [
       keywords: 'unavailable, maintenance',
       duration_minutes: 30,
       description: t('admin.accounts.tempUnschedulable.presets.unavailableDesc'),
-      scope: 'model' as const
+      scope: 'model' as const,
+      stream_timing: 'after_stream' as const,
+      trigger_count: 1,
+      trigger_window_minutes: 5
     }
   }
 ])
@@ -5268,7 +5375,7 @@ watch(
         .then(profiles => { tlsFingerprintProfiles.value = profiles.map(p => ({ id: p.id, name: p.name })) })
         .catch(() => { tlsFingerprintProfiles.value = [] })
       // Modal opened - fill related models
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      allowedModels.value = form.platform === 'qwen' ? [] : [...getModelsByPlatform(form.platform)]
       // Antigravity: 默认使用映射模式并填充默认映射
       if (form.platform === 'antigravity') {
         antigravityModelRestrictionMode.value = 'mapping'
@@ -5474,7 +5581,7 @@ watch(
   [modelRestrictionMode, () => form.platform],
   ([newMode]) => {
     if (newMode === 'whitelist') {
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      allowedModels.value = form.platform === 'qwen' ? [] : [...getModelsByPlatform(form.platform)]
     }
   }
 )
@@ -5592,7 +5699,10 @@ const addTempUnschedRule = (preset?: TempUnschedRuleForm) => {
     keywords: '',
     duration_minutes: 30,
     description: '',
-    scope: 'model'
+    scope: 'model',
+    stream_timing: 'before_stream',
+    trigger_count: 1,
+    trigger_window_minutes: 5
   })
 }
 
@@ -5616,6 +5726,9 @@ const buildTempUnschedRules = (rules: TempUnschedRuleForm[]) => {
     duration_minutes: number
     description: string
     scope: TempUnschedulableScope
+    stream_timing: TempUnschedulableStreamTiming
+    trigger_count: number
+    trigger_window_minutes: number
   }> = []
 
   for (const rule of rules) {
@@ -5636,7 +5749,10 @@ const buildTempUnschedRules = (rules: TempUnschedRuleForm[]) => {
       keywords,
       duration_minutes: Math.trunc(duration),
       description: rule.description.trim(),
-      scope: rule.scope
+      scope: rule.scope,
+      stream_timing: rule.stream_timing === 'after_stream' ? 'after_stream' : 'before_stream',
+      trigger_count: resolveTempUnschedTriggerCount(rule.trigger_count),
+      trigger_window_minutes: resolveTempUnschedTriggerWindow(rule.trigger_window_minutes)
     })
   }
 
@@ -5666,6 +5782,22 @@ const splitTempUnschedKeywords = (value: string) => {
     .split(/[,;]/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0)
+}
+
+function resolveTempUnschedTriggerCount(value: unknown): number {
+  const num = Number(value)
+  if (!Number.isFinite(num) || num < 1) {
+    return 1
+  }
+  return Math.min(1000, Math.trunc(num))
+}
+
+function resolveTempUnschedTriggerWindow(value: unknown): number {
+  const num = Number(value)
+  if (!Number.isFinite(num) || num < 1) {
+    return 1
+  }
+  return Math.trunc(num)
 }
 
 const needsMixedChannelCheck = (platform: AccountPlatform) => platform === 'antigravity' || platform === 'anthropic'
@@ -5746,20 +5878,29 @@ const ensureAntigravityMixedChannelConfirmed = async (onConfirm: () => Promise<v
 
 const initialChannelId = ref(0), initialChannelConfirmed = ref(false)
 const pendingChannelCreations = new Map<string, unknown>()
-async function runChannelCreation<T>(kind: string, payload: unknown, operation: () => Promise<T>, ids: (value: T) => number[], atomic = false): Promise<T> {
+async function runChannelCreation<T>(kind: string, payload: unknown, operation: () => Promise<T>, ids: (value: T) => number[], atomic = false, signal?: AbortSignal): Promise<T> {
+ signal?.throwIfAborted()
  if (!initialChannelId.value) return operation()
  if (!initialChannelConfirmed.value) throw new Error(t('upstreamEntities.confirmCreate'))
  const target = initialChannelId.value, key = JSON.stringify([kind, target, payload])
  let result = pendingChannelCreations.get(key) as T | undefined
  if (!result) { result = await operation(); pendingChannelCreations.set(key, result) }
+ signal?.throwIfAborted()
  const accounts = ids(result)
  for (let i = 0; i < accounts.length; i += 100) {
   const batch = accounts.slice(i, i + 100)
-  const current = await readChannelBindings(batch)
+  signal?.throwIfAborted()
+  const current = await (signal ? readChannelBindings(batch, { signal }) : readChannelBindings(batch))
+  signal?.throwIfAborted()
   if (current.length !== batch.length || current.some(b => b.channel_id !== target && (atomic || b.channel_id !== 0))) throw new Error(t('upstreamEntities.createReadbackFailed'))
   const unbound = current.filter(b => b.channel_id === 0)
-  if (unbound.length) await bindChannelAccounts(target, unbound)
-  const readback = await readChannelBindings(batch)
+  if (unbound.length) {
+    if (signal) await bindChannelAccounts(target, unbound, { signal })
+    else await bindChannelAccounts(target, unbound)
+  }
+  signal?.throwIfAborted()
+  const readback = await (signal ? readChannelBindings(batch, { signal }) : readChannelBindings(batch))
+  signal?.throwIfAborted()
   if (readback.length !== batch.length || readback.some(b => b.channel_id !== target)) throw new Error(t('upstreamEntities.createReadbackFailed'))
  }
  pendingChannelCreations.delete(key)
@@ -5769,12 +5910,12 @@ function createAccountWithUpstream(payload: CreateAccountRequest) {
  const selected = initialChannelId.value > 0 ? { upstream_channel_id: initialChannelId.value, confirm_upstream_channel_binding: initialChannelConfirmed.value } : {}
  return runChannelCreation('account', payload, () => adminAPI.accounts.create({ ...payload, ...selected }), a => [a.id], true)
 }
-function importWithUpstream(payload: UpstreamImportRequest) {
- return runChannelCreation('import', payload, () => adminAPI.accounts.importCodexSession(payload), result => {
+function importWithUpstream(payload: UpstreamImportRequest, signal?: AbortSignal) {
+ return runChannelCreation('import', payload, () => signal ? adminAPI.accounts.importCodexSession(payload, { signal }) : adminAPI.accounts.importCodexSession(payload), result => {
   const ids = (result.items || []).filter(item => item.action === 'created' && item.account_id).map(item => item.account_id!)
   if (initialChannelId.value && ids.length !== result.created) throw new Error(t('upstreamEntities.createReadbackFailed'))
   return ids
- })
+ }, false, signal)
 }
 function createPATWithUpstream(payload: UpstreamPATRequest) { return runChannelCreation('pat', payload, () => adminAPI.accounts.createOpenAICodexPAT(payload), a => [a.id]) }
 function createGrokWithUpstream(payload: Parameters<typeof adminAPI.grok.createFromSSO>[0]) {
@@ -5842,6 +5983,8 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 
 // Methods
 const resetForm = () => {
+  qwenSessionCache.value = false
+  qwenStrictAffinity.value = false
   initialChannelId.value = 0
   initialChannelConfirmed.value = false
   pendingChannelCreations.clear()
@@ -6466,6 +6609,10 @@ const handleSubmit = async () => {
     }
   }
 
+  if (form.platform === 'qwen') {
+    applyQwenCacheSettings(credentials, qwenSessionCache.value, qwenStrictAffinity.value)
+  }
+
   // Add model mapping if configured（OpenAI 开启自动透传时不应用）
   if (!isOpenAIModelRestrictionDisabled.value) {
     const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
@@ -6937,9 +7084,11 @@ const handleGrokAuthorizePassword = async (emailPasswordInput: string) => {
 }
 
 // 账号已建好后再建规则；规则失败只提示，不影响账号本身。
-const createAutoBPSRules = async (accountIds: number[]) => {
+const createAutoBPSRules = async (accountIds: number[], signal?: AbortSignal) => {
+  signal?.throwIfAborted()
   if (!autoBPSAvailable.value || accountIds.length === 0) return
-  const { failed, error } = await autoBPS.createFor(accountIds)
+  const { failed, error } = await autoBPS.createFor(accountIds, signal)
+  signal?.throwIfAborted()
   if (failed.length > 0) {
     appStore.showWarning(t('admin.accounts.openai.autoBPSCreateFailed', { count: failed.length, error: error || t('common.error') }), 8000)
   }
@@ -7093,7 +7242,8 @@ const isAgentIdentityImportContent = (content: string) => {
 }
 
 // Reuse Session import normalization and identity deduplication after 2FA login.
-const importTwoFACredential = async (credential: Record<string, unknown>, email: string, login: TokenGuardReloginAccount): Promise<'created' | 'skipped'> => {
+const importTwoFACredential = async (credential: Record<string, unknown>, email: string, login: TokenGuardReloginAccount, signal?: AbortSignal): Promise<'created' | 'skipped'> => {
+  signal?.throwIfAborted()
   const credentialExtras = buildOpenAICodexImportCredentialExtras()
   if (credentialExtras === null) throw new Error('invalid_account_settings')
   const result = await importWithUpstream({
@@ -7113,10 +7263,11 @@ const importTwoFACredential = async (credential: Record<string, unknown>, email:
     extra: withAccountExtraSettings(buildOpenAICodexImportExtra()),
     update_existing: false,
     skip_existing: true
-  })
+  }, signal)
+  signal?.throwIfAborted()
   if (result.failed > 0) throw new Error('import_failed')
   if (result.created > 0) {
-    await createAutoBPSRules(createdImportAccountIds(result))
+    await createAutoBPSRules(createdImportAccountIds(result), signal)
   }
   const accountIds = [...new Set((result.items ?? [])
     .filter(item => item.action === 'created' || item.action === 'skipped')
@@ -7124,13 +7275,17 @@ const importTwoFACredential = async (credential: Record<string, unknown>, email:
     .filter((id): id is number => typeof id === 'number' && id > 0))]
   if (!accountIds.length) throw new Error('import_missing_account_id')
   for (const accountId of accountIds) {
-    await createTokenGuardV2Account({
+    signal?.throwIfAborted()
+    const enrollment = {
       account_id: accountId, login_email: login.email,
-      credential_mode: 'password_totp', proxy_source: 'account',
+      credential_mode: 'password_totp' as const, proxy_source: 'account' as const,
       password: login.password, totp_secret: login.mfa_secret,
       enabled: true, auto_relogin_enabled: true
-    })
+    }
+    if (signal) await createTokenGuardV2Account(enrollment, { signal })
+    else await createTokenGuardV2Account(enrollment)
   }
+  signal?.throwIfAborted()
   if (result.created > 0) {
     emit('created')
     return 'created'
