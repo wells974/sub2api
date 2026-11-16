@@ -182,6 +182,23 @@ func (h *ImageHistory) WithInput(input []any, compact bool) ([]byte, error) {
 	for k, v := range h.source {
 		source[k] = v
 	}
+	// The compacted prefix may contain the last durable effort control. Fold
+	// the original history into the request before replacing it, including when
+	// replaying a checkpoint on a later turn. Retained newer controls still win.
+	effort, err := configurationUpdateEffort(h.source["input"], "")
+	if err != nil {
+		return nil, err
+	}
+	if effort != "" {
+		reasoning := object{}
+		if original, ok := source["reasoning"].(object); ok {
+			for key, value := range original {
+				reasoning[key] = value
+			}
+		}
+		reasoning["effort"] = effort
+		source["reasoning"] = reasoning
+	}
 	source["input"] = input
 	if compact {
 		source["input"] = append(append([]any{}, input...), object{"type": "compaction_trigger"})

@@ -298,6 +298,16 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 		return nil
 	})
 	if err != nil && !errors.Is(err, io.EOF) {
+		var searchValidation *searchToolValidationError
+		if errors.As(err, &searchValidation) {
+			terminalResponse = searchValidation.response
+			failureStage, repairSkippedReason = "bridge_tool_validation", "search_no_repair"
+			var rejected unknownClientToolError
+			if errors.As(err, &rejected) {
+				rejectedTool = rejected.name
+			}
+			err = protocolError{err}
+		}
 		var invalid protocolError
 		if errors.Is(err, io.ErrClosedPipe) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &invalid) {
 			return err

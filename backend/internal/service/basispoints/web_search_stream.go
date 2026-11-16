@@ -15,6 +15,16 @@ import (
 type WebSearchFunc func(context.Context, string) (SearchResult, error)
 type SearchContinuationFunc func(context.Context, []byte) (io.ReadCloser, error)
 
+// Keep local validation failures in-process across the search pipe. Encoding
+// them as upstream SSE errors loses diagnostics and misattributes failures;
+// accepting a wire marker instead would let upstream forge local attribution.
+type searchToolValidationError struct {
+	error
+	response object
+}
+
+func (e *searchToolValidationError) Unwrap() error { return e.error }
+
 // StreamWithSearch keeps one downstream response while executing unexposed
 // server search calls. It uses the regular bridge for final client tool/schema
 // validation. Search turns cannot enter generic tool repair or I/O replay.
@@ -64,6 +74,10 @@ func (b *Bridge) runWebSearch(ctx context.Context, upstream io.ReadCloser, write
 	}
 	err := b.searchRounds(ctx, upstream, wire, plan, search, next, state)
 	if err == nil || ctx.Err() != nil || errors.Is(err, io.ErrClosedPipe) {
+		return err
+	}
+	var validation *searchToolValidationError
+	if errors.As(err, &validation) {
 		return err
 	}
 	// A search/model continuation failure cannot look like a successful HTTP 200.
@@ -130,7 +144,9 @@ func (b *Bridge) searchRounds(ctx context.Context, upstream io.ReadCloser, wire 
 		check.stagedReplays = nil
 		// Validate every tool before any search side effect. All IDs are request-wide.
 		if err = check.validateToolResponse(response); err != nil {
-			return err
+			return &searchToolValidationError{error: err, response: object{
+				"id": state.id, "model": state.model, "status": "completed", "usage": state.usage,
+			}}
 		}
 		for i, rawItem := range output {
 			item, _ := rawItem.(object)

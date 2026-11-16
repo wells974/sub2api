@@ -123,32 +123,58 @@ func TestExcelBPSSearchOnDemandCatalogRoundTrip(t *testing.T) {
 func TestExcelBPSSearchSchemaFailureDoesNotRepairOrReplay(t *testing.T) {
 	t.Setenv("SUB2API_BPS_SCHEMA_REPAIR_ENABLED", "true")
 	t.Setenv("SUB2API_BPS_ON_DEMAND_CATALOG_ENABLED", "true")
-	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "neutral")
-	for _, stream := range []bool{false, true} {
-		t.Run(fmt.Sprint(stream), func(t *testing.T) {
-			upstream := &httpUpstreamRecorder{responses: []*http.Response{
-				excelSearchCallResponse(),
-				{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"output":"found","results":[]}`))},
-				bpsCompletionResponse(200, excelBPSRepairWire(t, "invalid", "Run", `{"name":"lookup","arguments":{"count":"PRIVATE_VALUE"}}`)),
-			}}
-			svc := openAIClientToolsTestService(upstream)
-			account := excelAccount()
-			account.Extra[ExcelBPSWebSearchKey] = true
-			account.Extra[ExcelBPSWebSearchAutoKey] = true
-			body := schemaGatewayRequest(stream)
-			rec := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(rec)
-			c.Request = httptest.NewRequest("POST", "/v1/responses", bytes.NewReader(body))
-			result, err := svc.Forward(context.Background(), c, account, body)
-			require.Error(t, err)
-			require.NotNil(t, result)
-			require.Len(t, upstream.requests, 3)
-			require.Equal(t, 20, result.Usage.InputTokens)
-			require.Equal(t, 4, result.Usage.OutputTokens)
-			require.NotContains(t, rec.Body.String(), "response.function_call_arguments")
-			require.NotContains(t, rec.Body.String(), "PRIVATE_VALUE")
-			require.NotContains(t, strings.ToLower(rec.Body.String()), "basispoints")
-			require.True(t, account.IsExcelBPSEnabled())
+	for _, mode := range []string{"neutral", "legacy"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", mode)
+			for _, stream := range []bool{false, true} {
+				t.Run(fmt.Sprint(stream), func(t *testing.T) {
+					core, logs := observer.New(zap.InfoLevel)
+					ctx := logger.IntoContext(context.Background(), zap.New(core))
+					upstream := &httpUpstreamRecorder{responses: []*http.Response{
+						excelSearchCallResponse(),
+						{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"output":"found","results":[]}`))},
+						bpsCompletionResponse(200, excelBPSRepairWire(t, "invalid", "Run", `{"name":"lookup","arguments":{"count":"PRIVATE_VALUE"}}`)),
+					}}
+					svc := openAIClientToolsTestService(upstream)
+					account := excelAccount()
+					account.Extra[ExcelBPSWebSearchKey] = true
+					account.Extra[ExcelBPSWebSearchAutoKey] = true
+					body := schemaGatewayRequest(stream)
+					rec := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(rec)
+					c.Request = httptest.NewRequest("POST", "/v1/responses", bytes.NewReader(body)).WithContext(ctx)
+					result, err := svc.Forward(ctx, c, account, body)
+					require.Error(t, err)
+					require.NotNil(t, result)
+					require.Len(t, upstream.requests, 3)
+					require.Equal(t, 20, result.Usage.InputTokens)
+					require.Equal(t, 4, result.Usage.OutputTokens)
+					require.NotContains(t, rec.Body.String(), "response.function_call_arguments")
+					require.NotContains(t, rec.Body.String(), "PRIVATE_VALUE")
+					if mode == "neutral" {
+						require.NotContains(t, strings.ToLower(rec.Body.String()), "basispoints")
+					} else {
+						require.Contains(t, rec.Body.String(), `"failure_stage":"bridge_tool_validation"`)
+					}
+					require.True(t, account.IsExcelBPSEnabled())
+					observed, ok := GetOpsStreamError(c)
+					require.True(t, ok)
+					require.NotNil(t, observed.BridgeFailure)
+					require.Equal(t, "bridge_tool_validation", observed.BridgeFailure.FailureStage)
+					require.Equal(t, "search_no_repair", observed.BridgeFailure.RepairSkippedReason)
+					require.Equal(t, "response.completed", observed.BridgeFailure.UpstreamTerminalEvent)
+					require.NotNil(t, observed.BridgeFailure.ToolArguments)
+					require.Equal(t, "/count", observed.BridgeFailure.ToolArguments.Path)
+					require.Equal(t, "type", observed.BridgeFailure.ToolArguments.Rule)
+					events := logs.FilterMessage("bps_request_diagnostics").All()
+					require.Len(t, events, 1)
+					diagnostic, err := json.Marshal(events[0].ContextMap())
+					require.NoError(t, err)
+					require.Equal(t, "tool_arguments", gjson.GetBytes(diagnostic, "schema_phase").String())
+					require.Equal(t, "/count", gjson.GetBytes(diagnostic, "schema_failure.path").String())
+					require.NotContains(t, string(diagnostic), "PRIVATE_VALUE")
+				})
+			}
 		})
 	}
 }

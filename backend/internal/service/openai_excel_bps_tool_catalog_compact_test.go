@@ -14,6 +14,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
@@ -29,6 +30,11 @@ func TestExcelBPSOnDemandCatalogAfterImageCompaction(t *testing.T) {
 	require.NoError(t, err)
 	body, err = sjson.SetBytes(body, "stream", true)
 	require.NoError(t, err)
+	var input []any
+	require.NoError(t, json.Unmarshal([]byte(gjson.GetBytes(body, "input").Raw), &input))
+	input = append([]any{map[string]any{"type": "configuration_update", "reasoning": map[string]any{"effort": "high"}}}, input...)
+	body, err = sjson.SetBytes(body, "input", input)
+	require.NoError(t, err)
 	toolJSON, err := json.Marshal(onDemandGatewaySource(true)["tools"])
 	require.NoError(t, err)
 	body, err = sjson.SetRawBytes(body, "tools", toolJSON)
@@ -41,6 +47,7 @@ func TestExcelBPSOnDemandCatalogAfterImageCompaction(t *testing.T) {
 		phase++
 		request, err := io.ReadAll(req.Body)
 		require.NoError(t, err)
+		require.Equal(t, "high", gjson.GetBytes(request, "reasoning_effort").String(), "compaction and catalog generation retain durable effort")
 		if phase == 1 {
 			require.Contains(t, string(request), "Do not call Excel, Office, workbook or connector tools.", "compact keeps its original no-tool preparation")
 			require.NotContains(t, string(request), "__sub2api_tool_catalog")
