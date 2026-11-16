@@ -206,3 +206,36 @@ func TestAccountOpsPoolUsesExistingDeliveryRetries(t *testing.T) {
 	require.Equal(t, "suppressed", repo.state)
 	require.Equal(t, 2, calls)
 }
+
+func TestAccountOpsPoolMultipleRecipientsAndScopedConfig(t *testing.T) {
+	repo := &accountOpsRepoStub{}
+	sender := &opsTeamSender{calls: map[string]int{}, failed: "two@example.test"}
+	svc := NewAccountOpsService(&accountOpsSettingsStub{}, repo, sender)
+	cfg := defaultAccountOpsConfig()
+	cfg.Enabled, cfg.Recipient = true, "one@example.test;two@example.test\nONE@example.test"
+	cfg.BalanceLow, cfg.WeeklyQuota = false, false // Only the fork's pool event is enabled.
+	cfg.PoolNotifications = &AccountOpsPoolConfig{Enabled: true, NotifyStates: true, NotifyCounts: true}
+	cfg.Groups = []AccountOpsGroup{{ID: "manual-supplier", Name: "Supplier", ProviderID: 42, AccountIDs: []int64{1}}}
+	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
+	saved, err := svc.SaveNotificationSettings(context.Background(), AccountOpsNotificationSettings{EmailName: ptrPool("On call")})
+	require.NoError(t, err)
+	require.True(t, saved.PoolEnabled())
+	require.Equal(t, int64(42), saved.Groups[0].ProviderID)
+	require.Equal(t, "one@example.test, two@example.test", saved.Recipient)
+	_, event, err := ObserveAccountOpsPool("", poolFixture(), *saved.PoolNotifications)
+	require.NoError(t, err)
+	event.Attempts = 1
+	svc.deliverNotification(context.Background(), event)
+	require.Equal(t, "failed", repo.state)
+	require.Len(t, event.Deliveries, 2)
+	sender.failed = ""
+	event.Attempts = 2
+	svc.deliverNotification(context.Background(), event)
+	require.Equal(t, "sent", repo.state)
+	require.Equal(t, map[string]int{"one@example.test": 1, "two@example.test": 2}, sender.calls)
+	_, err = svc.SaveNotificationSettings(context.Background(), AccountOpsNotificationSettings{Enabled: ptrPool(false), PoolNotifications: &AccountOpsPoolConfig{Enabled: false, NotifyStates: true, NotifyCounts: true}})
+	require.NoError(t, err)
+	svc.deliverNotification(context.Background(), event)
+	require.Equal(t, "suppressed", repo.state)
+	require.Equal(t, map[string]int{"one@example.test": 1, "two@example.test": 2}, sender.calls)
+}

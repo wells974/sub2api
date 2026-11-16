@@ -97,6 +97,12 @@ func (b *Bridge) schemaRepairBatch(response object) ([]schemaRepairCall, string)
 		if !exists || info.Kind != "function" {
 			return nil, "unsupported_tool_target"
 		}
+		// Schema validation can fail before validateToolResponse reaches a later
+		// wrong-target call. Check the whole batch before submitting feedback;
+		// repairing parameters must never authorize a different selected tool.
+		if err := b.validateSelectedTool(object{"type": "function_call", "name": info.Name, "namespace": info.Namespace}); err != nil {
+			return nil, "tool_choice"
+		}
 		// The delivery gate would translate this call into a documentation print.
 		// That successful translation does not certify the action's arguments, and
 		// its full contract is not yet available to the correcting model. Keep the
@@ -285,6 +291,9 @@ func (b *Bridge) translateCompletedWithSchema(ctx context.Context, response obje
 	if repairCtx.Err() != nil {
 		s.record(true, "timed_out", "")
 		return fmt.Errorf("basispoints schema correction timed out; no tool was executed")
+	}
+	if err := b.validateToolResponse(combined); err != nil {
+		return err
 	}
 	if err := b.translateResponse(combined); err != nil {
 		return err

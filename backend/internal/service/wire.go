@@ -1048,6 +1048,7 @@ func ProvideAPIKeyServiceWithGroupProtection(
 
 // ProviderSet is the Wire provider set for all services
 var ProviderSet = wire.NewSet(
+	ProvideQQBotService,
 	ProvideAutoCreditEmailWorker,
 	ProvideAccountPerformanceService,
 	ProvideRequestCaptureManager,
@@ -1215,11 +1216,9 @@ func ProvidePaymentConfigService(entClient *dbent.Client, settingRepo SettingRep
 }
 
 // ProvideBalanceNotifyService creates BalanceNotifyService
-func ProvideBalanceNotifyService(emailService *EmailService, settingRepo SettingRepository, accountRepo AccountRepository, notificationEmailService *NotificationEmailService, db *sql.DB, cfg *config.Config, users UserRepository) *BalanceNotifyService {
+func ProvideBalanceNotifyService(emailService *EmailService, settingRepo SettingRepository, accountRepo AccountRepository, notificationEmailService *NotificationEmailService) *BalanceNotifyService {
 	svc := NewBalanceNotifyService(emailService, settingRepo, accountRepo)
 	svc.SetNotificationEmailService(notificationEmailService)
-	svc.forecast = NewBalanceForecastService(db, settingRepo, users, notificationEmailService)
-	startBackgroundService(cfg, svc.forecast)
 	return svc
 }
 

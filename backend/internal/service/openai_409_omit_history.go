@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"go.uber.org/zap"
 )
 
 const openAIHistoricalCiphertextOmitted = "[Historical encrypted content omitted by the gateway. Its contents are unavailable; do not infer missing instructions or results.]"
@@ -55,14 +58,35 @@ func (s *OpenAIGatewayService) TryRebuildOpenAI409History(ctx context.Context, c
 	if r.lookupErr != nil {
 		return ctx, body, false, r.lookupErr
 	}
-	if r.conflict || (r.owner != nil && (r.owner.pending != "" || r.owner.failed || r.owner.conflicted)) {
-		return ctx, body, false, openAIAgentRecoveryError("owner_conflict")
+	if r.conflict {
+		return ctx, body, false, openAIRecoveryDiagnosticError("owner_conflict", r.diagnostics.subreason, r)
+	}
+	if r.owner != nil && (r.owner.pending != "" || r.owner.failed || r.owner.conflicted) {
+		return ctx, body, false, openAIRecoveryDiagnosticError("owner_conflict", openAIRecoveryOwnerDetail(*r.owner, true), r)
+	}
+	_, websocket := ctx.Value(openAIWSAgentRecoveryRetryKey{}).(*atomic.Bool)
+	mixedWS := websocket && r.mixedOwners
+	if mixedWS && !r.hasCompletedMixedOwners() {
+		return ctx, body, false, openAIRecoveryDiagnosticError("owner_conflict", "owner_delivery_unknown", r)
+	}
+	if mixedWS {
+		for _, item := range gjson.GetBytes(body, "input").Array() {
+			kind := item.Get("type").String()
+			if (kind == "function_call_output" || kind == "custom_tool_call_output") && !openAIReadableShadowTextOnly(item.Get("output")) {
+				return ctx, body, false, openAIRecoveryDiagnosticError("readable_history_unsupported", "tool_history_unsupported", r)
+			}
+		}
 	}
 	if len(r.items) == 0 && !openAI409HasProviderState(body) {
 		return ctx, body, false, nil
 	}
 	if !openAI409HasReadableIntent(body) {
-		return ctx, body, false, openAIAgentRecoveryError("readable_intent_missing")
+		return ctx, body, false, openAIRecoveryDiagnosticError("readable_intent_missing", "readable_intent_missing", r)
+	}
+	if websocket {
+		if err := s.verifyOpenAIToolInputs(ctx, r, body); err != nil {
+			return ctx, body, false, err
+		}
 	}
 	clean, changed := omitOpenAIHistoricalCiphertext(body)
 	if ctx.Err() != nil {
@@ -79,6 +103,16 @@ func (s *OpenAIGatewayService) TryRebuildOpenAI409History(ctx context.Context, c
 	if err != nil {
 		return ctx, body, false, openAIAgentRecoveryError("readable_history_unsupported")
 	}
+	if mixedWS {
+		if _, detail := inspectOpenAIWSCompletedTools(body); detail != "" {
+			return ctx, body, false, openAIRecoveryDiagnosticError("owner_conflict", detail, r)
+		}
+		clean, err = projectOpenAIWSCompletedTools(clean)
+		if err != nil {
+			return ctx, body, false, withOpenAIRecoveryDiagnostics(err, r, "tool_history_unsupported")
+		}
+		r.requireCompletedOwners = true
+	}
 	fresh := context.WithValue(ctx, openAIGuardianParentAffinityContextKey{}, openAIGuardianParentAffinity{})
 	next := s.WithOpenAIAgentMessageRecovery(WithOpenAIEncryptedReasoningAffinity(fresh, clean), c, clean, session, model)
 	request := openAIAgentRecoveryFromContext(next)
@@ -88,6 +122,7 @@ func (s *OpenAIGatewayService) TryRebuildOpenAI409History(ctx context.Context, c
 	request.inputDigest = openAIAgentRecoveryInputDigest(clean)
 	request.replayControlsDigest = openAI409ControlsDigest(clean)
 	request.omittedSource = r
+	request.toolProofs = r.toolProofs
 	return next, clean, true, nil
 }
 
@@ -407,7 +442,7 @@ func openAI409ReadableMetadata(value any) any {
 }
 
 func prepareOpenAI409KnownReadableReplay(raw []byte) ([]byte, error) {
-	clean, _, err := sanitizeOpenAIResponsesInputItemIDs(raw)
+	clean, err := normalizeOpenAIReplayMetadata(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -507,8 +542,8 @@ func prepareOpenAI409APIKeyReplay(ctx context.Context, body []byte, responsesLit
 	if r == nil || !r.omittedHistory {
 		return body, nil
 	}
-	if openAIAgentRecoveryInputDigest(body) != r.inputDigest || openAI409ControlsDigest(body) != r.replayControlsDigest {
-		return nil, openAIAgentRecoveryError("wire_changed")
+	if err := checkOpenAIRecoveryProjectionSource(ctx, "apikey_projection_source", body, r); err != nil {
+		return nil, err
 	}
 	prepared, _, err := normalizeOpenAIParallelToolCallsWithoutTools(body, responsesLite)
 	if err != nil {
@@ -534,9 +569,12 @@ func prepareOpenAI409OAuthReplay(ctx context.Context, c *gin.Context, body map[s
 	if err != nil {
 		return err
 	}
-	if openAIAgentRecoveryInputDigest(before) != r.inputDigest || openAI409ControlsDigest(before) != r.replayControlsDigest {
-		return openAIAgentRecoveryError("wire_changed")
+	if err := checkOpenAIRecoveryProjectionSource(ctx, "oauth_projection_source", before, r); err != nil {
+		return err
 	}
+	// ChatGPT rejects this output-only metadata. Normalize before freezing the
+	// OAuth representation; the later ordinary transform must be idempotent.
+	normalizeOpenAIOAuthResponsesCompatibilityFields(body)
 	if isInstructionsEmpty(body) {
 		body["instructions"] = defaultCodexSynthInstructions(firstNonEmptyString(body["model"]))
 	}
@@ -558,4 +596,110 @@ func prepareOpenAI409OAuthReplay(ctx context.Context, c *gin.Context, body map[s
 	r.oauthControlsDigest = openAI409ControlsDigest(prepared)
 	r.oauthReplayPrepared = true
 	return nil
+}
+
+// A rebuilt request is a new native Responses conversation. An API-key
+// account's ordinary passthrough preference must not route this prepared
+// request around the native input and delivery checks. Subsequent single-owner
+// turns must keep the learned native route too; exact route/credentials/wire
+// validation still runs before sending.
+func openAI409UsesNativeAPIKey(ctx context.Context, account *Account) bool {
+	r := openAIAgentRecoveryFromContext(ctx)
+	return r != nil && account != nil && account.IsOpenAIApiKey() &&
+		(r.omittedHistory || (r.ownerBindingRequired() && r.owner.accountID == account.ID))
+}
+
+func openAIRecoveryWireRefusal(ctx context.Context, stage string, details ...zap.Field) error {
+	fields := append([]zap.Field{zap.String("stage", stage)}, details...)
+	logger.FromContext(ctx).Warn("openai.encrypted_history_409_refused", fields...)
+	return openAIRecoveryDiagnosticError("wire_changed", stage, openAIAgentRecoveryFromContext(ctx))
+}
+
+func checkOpenAIRecoveryProjectionSource(ctx context.Context, stage string, body []byte, r *openAIAgentRecoveryRequest) error {
+	inputChanged := openAIAgentRecoveryInputDigest(body) != r.inputDigest
+	controlsChanged := openAI409ControlsDigest(body) != r.replayControlsDigest
+	if !inputChanged && !controlsChanged {
+		return nil
+	}
+	// Fixed metadata only. Do not log the input, tools, instructions or digests.
+	return openAIRecoveryWireRefusal(ctx, stage,
+		zap.Bool("input_changed", inputChanged), zap.Bool("controls_changed", controlsChanged))
+}
+
+// Derive the HTTP representation only from the verified readable snapshot,
+// before Forward's compatibility pipeline touches it. Keep the original
+// context immutable so a later account admission starts from the same input.
+// This is not a digest update at the final send boundary.
+func (s *OpenAIGatewayService) prepareOpenAI409HTTPProjection(ctx context.Context, c *gin.Context, account *Account, body []byte) (context.Context, []byte, error) {
+	r := openAIAgentRecoveryFromContext(ctx)
+	if r == nil || !r.omittedHistory {
+		return ctx, body, nil
+	}
+	if err := checkOpenAIRecoveryProjectionSource(ctx, "http_projection_source", body, r); err != nil {
+		return ctx, body, err
+	}
+	clean := s.normalizeRequestTimezone(ctx, account, body, "http")
+	var err error
+	if account.IsOpenAIOAuthLike() {
+		clean, _, err = stripOpenAICodexUnsupportedWebSearchFields(clean)
+		if err != nil {
+			return ctx, body, err
+		}
+	}
+	clean, _, err = normalizeOpenAIResponsesLegacyIngressWithConfig(s.cfg, clean)
+	if err != nil {
+		return ctx, body, err
+	}
+	clean, _, err = sanitizeOpenAIResponsesToolSchemasForPlatform(clean, account.Platform)
+	if err != nil {
+		return ctx, body, err
+	}
+	if isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) {
+		clean, _, err = normalizeOpenAIResponsesLitePayloadForAccount(clean, account)
+		if err != nil {
+			return ctx, body, err
+		}
+	}
+	clean, err = normalizeOpenAIResponsesNamespaces(c, account, clean, OpenAIUpstreamTransportHTTPSSE, false, false)
+	if err != nil {
+		return ctx, body, err
+	}
+	// Match the existing native builder's empty-image sanitation before
+	// freezing this projected representation. Keep readable text, completed
+	// tool results, order and exact JSON numbers; do not rebase at final send.
+	if openAIRequestBodyMayContainEmptyBase64InputImage(clean) {
+		var decoded map[string]any
+		if err := decodeOpenAIJSONUseNumber(clean, &decoded); err != nil {
+			return ctx, body, err
+		}
+		if sanitizeEmptyBase64InputImagesInOpenAIRequestBodyMap(decoded) {
+			clean, err = json.Marshal(decoded)
+			if err != nil {
+				return ctx, body, err
+			}
+		}
+	}
+	clean, err = s.projectOpenAI409ImageControls(ctx, c, account, clean)
+	if err != nil {
+		return ctx, body, err
+	}
+	snapshot := *r
+	snapshot.inputDigest = openAIAgentRecoveryInputDigest(clean)
+	snapshot.replayControlsDigest = openAI409ControlsDigest(clean)
+	snapshot.apiReplayPrepared, snapshot.oauthReplayPrepared = false, false
+	return context.WithValue(ctx, openAIAgentRecoveryContextKey{}, &snapshot), clean, nil
+}
+
+// Account-scoped routing exclusions are applied before acquiring a candidate.
+// The same boundary remains enforced by the dispatch guard after revalidation.
+func (s *OpenAIGatewayService) openAI409AccountRouteSupported(ctx context.Context, account *Account, model string) bool {
+	r := openAIAgentRecoveryFromContext(ctx)
+	if r == nil || !r.omittedHistory {
+		return true
+	}
+	return account != nil && account.IsOpenAI() && !account.HasManagedOpenAIConnections() && account.AuthConnectionID == "" &&
+		!account.IsCopilotSDKEnabled() && !account.IsSIWCEnabled() &&
+		!account.IsExcelBPSEnabledForModel(model) && !account.IsPrismBrowserEnabledForModel(model) &&
+		s.resolveUpstreamProtocolFor(ctx, account, APIProtocolResponses, account.GetMappedModel(model)) == APIProtocolResponses &&
+		(!account.IsOpenAIPassthroughEnabled() || account.IsOpenAIApiKey())
 }

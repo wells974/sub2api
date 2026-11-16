@@ -37,7 +37,13 @@ export interface AccountOpsQuotaThreshold {
   notify_recovery?: boolean
 }
 export type AccountOpsObservationStatus = 'ok' | 'stale' | 'failed' | 'unsupported' | 'unknown'
+export type AccountOpsOAuthLifecycle = 'temporary' | 'long_term'
+export async function setAccountOpsOAuthLifecycle(id: number, lifecycle: AccountOpsOAuthLifecycle): Promise<void> {
+  await apiClient.put(`/admin/account-ops/accounts/${id}/lifecycle`, { lifecycle })
+}
 export interface AccountOpsThresholdAccount {
+  provider_id?: number
+  oauth_lifecycle?: AccountOpsOAuthLifecycle
   account_id: number
   account_name: string
   group_id?: string
@@ -61,6 +67,7 @@ export interface AccountOpsThresholdAccount {
   }>
 }
 export interface AccountOpsGroup {
+  provider_id?: number
   id: string
   name: string
   default_name: string
@@ -78,7 +85,7 @@ export interface AccountOpsConfig {
   weekly_quota: boolean
   cooldown_minutes: number
   webhooks?: AccountOpsWebhook[]
-  groups?: Array<{ id: string; name: string; provider?: string; site?: string; account_ids?: number[] }>
+  groups?: Array<{ id: string; name: string; provider_id?: number; provider?: string; site?: string; account_ids?: number[] }>
   balance_thresholds?: AccountOpsBalanceThreshold[]
   quota_thresholds?: AccountOpsQuotaThreshold[]
 }
@@ -166,7 +173,7 @@ export async function getAccountOpsThresholdGroups(): Promise<AccountOpsGroup[]>
     account_ids: Array.isArray(group.account_ids) ? [...group.account_ids] : [],
   }))
 }
-export async function saveAccountOpsGroups(groups: Array<{ id: string; name: string; provider?: string; site?: string; account_ids: number[] }>): Promise<AccountOpsConfig> {
+export async function saveAccountOpsGroups(groups: Array<{ id: string; name: string; provider_id?: number; provider?: string; site?: string; account_ids: number[] }>): Promise<AccountOpsConfig> {
   return (await apiClient.put('/admin/account-ops/groups', { groups })).data
 }
 export async function testAccountOpsWebhook(id: string): Promise<{ ok: boolean }> {

@@ -60,6 +60,40 @@ describe('account operations tabs and independent saves', () => {
     } finally { wrapper.unmount() }
   })
 
+  it('preserves provider links and pool settings across scoped saves and immediate group reopening', async () => {
+    const pool = { enabled: true, notify_states: true, notify_counts: true }
+    const groups = pollingGroups()
+    groups[0]!.provider_id = 42
+    const saved = { ...config, recipient: 'one@example.test, two@example.test', groups, pool_notifications: pool }
+    vi.mocked(getAccountOpsSettings).mockResolvedValue({ ...settings(), config: saved })
+    vi.mocked(getAccountOpsThresholdGroups).mockResolvedValue(groups)
+    vi.mocked(getAccountOpsThresholdAccounts).mockResolvedValue(pollingAccounts())
+    vi.mocked(saveAccountOpsPool).mockResolvedValue(saved)
+    vi.mocked(saveAccountOpsGroups).mockResolvedValue(saved)
+    const wrapper = create()
+    try {
+      await flushPromises()
+      await wrapper.get('[data-testid="pool-notification-settings"]').trigger('submit')
+      await flushPromises()
+      expect((wrapper.vm as any).remote.config).toMatchObject({
+        recipient: saved.recipient, pool_notifications: pool, groups: [expect.objectContaining({ provider_id: 42 }), expect.anything()],
+      })
+      await wrapper.get('[data-testid="edit-account-groups"]').trigger('click')
+      const pending = deferred<AccountOpsGroup[]>()
+      vi.mocked(getAccountOpsThresholdGroups).mockReturnValueOnce(pending.promise)
+      await wrapper.get('[data-testid="save-account-groups"]').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-testid="edit-account-groups"]').trigger('click')
+      expect((wrapper.findAll('[data-testid="ops-provider-select"]')[0]!.element as HTMLSelectElement).value).toBe('42')
+      await wrapper.get('[data-testid="save-account-groups"]').trigger('click')
+      await flushPromises()
+      expect(vi.mocked(saveAccountOpsGroups).mock.calls[1]![0][0]).toMatchObject({ provider_id: 42 })
+      expect((wrapper.get('[data-testid="pool-enabled"]').element as HTMLInputElement).checked).toBe(true)
+      pending.resolve(groups)
+      await flushPromises()
+    } finally { wrapper.unmount() }
+  })
+
   it('reopens from saved memberships before the post-save groups read completes', async () => {
     vi.mocked(getAccountOpsThresholdGroups).mockImplementation(async () => pollingGroups())
     vi.mocked(getAccountOpsThresholdAccounts).mockImplementation(async () => pollingAccounts())

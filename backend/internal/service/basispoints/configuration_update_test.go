@@ -48,6 +48,23 @@ func TestPrepareConfigurationUpdateWithoutTopLevelEffort(t *testing.T) {
 	require.Equal(t, "high", bridge.RequestedEffort)
 }
 
+func TestConfigurationUpdateDoesNotHideCurrentEncryptedAssignment(t *testing.T) {
+	source := testSource()
+	source["input"] = []any{
+		object{"type": "agent_message", "encrypted_content": "PRIVATE_TASK", "content": "Readable header"},
+		object{"type": "configuration_update", "reasoning": object{"effort": "high"}},
+		object{"type": "reasoning", "summary": []any{}},
+	}
+	raw, err := json.Marshal(source)
+	require.NoError(t, err)
+	require.ErrorContains(t, ValidateNewAgentMessage(raw), "input[0].encrypted_content")
+	_, err = StripEncryptedContent(raw)
+	require.ErrorContains(t, err, "input[0].encrypted_content")
+	_, _, err = Prepare(raw, "configuration", nil)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "PRIVATE_TASK")
+}
+
 func TestPrepareConfigurationUpdatePreservesToolHistory(t *testing.T) {
 	source := testSource()
 	source["tools"] = []any{object{"type": "function", "name": "shell", "parameters": object{"type": "object"}}}
