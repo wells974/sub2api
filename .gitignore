@@ -241,6 +241,7 @@ issues/
 tools/local-worker/
 
 !docs/key-risk-patrol.md
+!docs/release-v2.21.5.3.md
 
 # Reproducible Free Fast customer-cost evidence runners.
 !/.github/scripts/
