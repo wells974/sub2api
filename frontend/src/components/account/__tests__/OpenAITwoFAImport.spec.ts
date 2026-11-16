@@ -153,3 +153,34 @@ describe('BPS initial 2FA import', () => {
     expect(getExcelTwoFALogin).not.toHaveBeenCalled()
   })
 })
+
+it.each([
+  ['EXCEL_LOGIN_WORKER_PREPARING', undefined, 'tokenGuard.twoFA.failures.workerPreparing'],
+  ['EXCEL_LOGIN_WORKER_UNAVAILABLE', undefined, 'tokenGuard.twoFA.failures.excelWorkerUnavailable'],
+  ['OPENAI_REAUTH_WORKER_UNAVAILABLE', 'release_required', 'tokenGuardV2.runtimeReasons.release_required'],
+  ['OPENAI_REAUTH_WORKER_UNAVAILABLE', 'runtime_install_failed', 'tokenGuardV2.runtimeReasons.runtime_install_failed'],
+  ['OPENAI_REAUTH_WORKER_UNAVAILABLE', 'runtime_source_invalid', 'tokenGuardV2.runtimeReasons.runtime_source_invalid'],
+  ['OPENAI_REAUTH_WORKER_UNAVAILABLE', 'PRIVATE_REASON', 'tokenGuard.twoFA.failures.workerUnavailable'],
+  ['EXCEL_LOGIN_PROXY_UNAVAILABLE', undefined, 'tokenGuard.twoFA.failures.proxyUnavailable'],
+  ['PRIVATE_REASON', undefined, 'tokenGuard.twoFA.states.failed'],
+  ['__proto__', undefined, 'tokenGuard.twoFA.states.failed'],
+])('shows a safe actionable failure for %s / %s and clears it after retry', async (reason, workerReason, key) => {
+  vi.mocked(startExcelTwoFALogin).mockRejectedValueOnce({
+    status: 503, reason, message: 'PRIVATE_PASSWORD PRIVATE_TOTP PRIVATE_TOKEN',
+    metadata: { worker_reason: workerReason },
+  }).mockResolvedValue({ id: 'retry-job', status: 'running' })
+  vi.mocked(getExcelTwoFALogin).mockResolvedValue({ id: 'retry-job', status: 'succeeded', credential: { access_token: 'mock-access' } })
+  vi.mocked(deleteExcelTwoFALogin).mockResolvedValue()
+  const importCredential = vi.fn().mockResolvedValue('created')
+  const wrapper = mount(OpenAITwoFAImport, { props: { importCredential, excelOauth: true } })
+  await start(wrapper, 'a@example.com----password----totp')
+  expect(wrapper.text()).toContain(key)
+  expect(wrapper.text()).not.toContain('PRIVATE_')
+  expect(importCredential).not.toHaveBeenCalled()
+  expect(getExcelTwoFALogin).not.toHaveBeenCalled()
+  await wrapper.get('[data-testid="two-fa-start"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).not.toContain(key)
+  expect(wrapper.text()).toContain('tokenGuard.twoFA.states.created')
+  expect(importCredential).toHaveBeenCalledTimes(1)
+})

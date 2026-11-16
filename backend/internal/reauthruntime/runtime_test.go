@@ -65,8 +65,8 @@ type transportFunc func(*http.Request) (*http.Response, error)
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestPrepareVerifiesDigestBeforeExecutingAndReusesCache(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Linux runtime")
+	if runtime.GOOS == "windows" {
+		t.Skip("mock runtime requires a POSIX shell")
 	}
 	for _, valid := range []bool{false, true} {
 		t.Run(map[bool]string{true: "valid", false: "tampered"}[valid], func(t *testing.T) {
@@ -79,13 +79,16 @@ func TestPrepareVerifiesDigestBeforeExecutingAndReusesCache(t *testing.T) {
 				digest = strings.Repeat("0", 64)
 			}
 			requests := 0
-			m := New(root, "1.2.3", "http://127.0.0.1:4040", strings.Repeat("x", 64))
+			m := New(root, "2.21.5.2", "http://127.0.0.1:4040", strings.Repeat("x", 64))
 			m.client = &http.Client{Transport: transportFunc(func(req *http.Request) (*http.Response, error) {
 				requests++
 				require.NotContains(t, req.URL.String(), m.token)
 				body := data
 				if strings.Contains(req.URL.Path, "/releases/tags/") {
-					body, _ = json.Marshal(map[string]any{"assets": []map[string]string{{"name": "sub2api-reauth_1.2.3_linux_" + runtime.GOARCH + ".tar.gz", "digest": "sha256:" + digest}}})
+					require.Equal(t, "https://api.github.com/repos/"+m.repository+"/releases/tags/v2.21.5.2", req.URL.String())
+					body, _ = json.Marshal(map[string]any{"assets": []map[string]string{{"name": "sub2api-reauth_2.21.5.2_linux_" + runtime.GOARCH + ".tar.gz", "digest": "sha256:" + digest}}})
+				} else {
+					require.Equal(t, "https://github.com/"+m.repository+"/releases/download/v2.21.5.2/sub2api-reauth_2.21.5.2_linux_"+runtime.GOARCH+".tar.gz", req.URL.String())
 				}
 				return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), Header: http.Header{}}, nil
 			})}
@@ -131,14 +134,14 @@ func TestManagedProcessGetsOnlyWorkerEnvironmentAndStops(t *testing.T) {
 		t.Skip("Linux process supervision")
 	}
 	root := t.TempDir()
-	dir := filepath.Join(root, "1.2.3-linux-"+runtime.GOARCH)
+	m := New(root, "2.21.5.2", "http://127.0.0.1:4040", "synthetic-worker-token")
+	dir := m.runtimeDir()
 	require.NoError(t, os.MkdirAll(dir, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "ready"), []byte("cached"), 0600))
 	script := "#!/bin/sh\nprintf '%s' \"$OPENAI_REAUTH_WORKER_TOKEN\" > worker-token\nprintf '%s' \"$DATABASE_PASSWORD\" > unrelated-secret\nprintf '%s' \"$OPENAI_REAUTH_CONCURRENCY\" > concurrency\nexec /bin/sleep 60\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "python"), []byte(script), 0700))
 	t.Setenv("OPENAI_REAUTH_CONCURRENCY", "4")
 	t.Setenv("DATABASE_PASSWORD", "must-not-inherit")
-	m := New(root, "1.2.3", "http://127.0.0.1:4040", "synthetic-worker-token")
 	m.Ensure()
 	defer m.Stop()
 	// Child output can precede the parent's running status update after Start.
@@ -161,4 +164,53 @@ func TestManagedProcessGetsOnlyWorkerEnvironmentAndStops(t *testing.T) {
 	require.Equal(t, "4", string(got))
 	m.Stop()
 	require.Equal(t, "stopped", m.Status().State)
+}
+
+func TestReleaseVersionAndRepositoryValidation(t *testing.T) {
+	t.Setenv("UPDATE_GITHUB_REPO", "")
+	for _, version := range []string{"2.21.5", "v2.21.5", "2.21.5.2", "v2.21.5.2", "2.21.5-rc.1", "2.21.5.2-rc.1"} {
+		m := New(t.TempDir(), version, "http://localhost", "test")
+		require.Empty(t, m.releaseUnavailableReason(), version)
+		require.Equal(t, "wells974/sub2api", m.repository)
+		m.Stop()
+	}
+	for _, version := range []string{"dev", "2.21", "2.21.5.2.1", "2.21.5/../../escape", "2.21.5?x=y"} {
+		m := New(t.TempDir(), version, "http://localhost", "test")
+		require.Equal(t, "release_required", m.releaseUnavailableReason())
+		m.client = &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("invalid release must not download")
+			return nil, nil
+		})}
+		_, err := m.prepare(context.Background())
+		require.Error(t, err)
+		m.Stop()
+	}
+	t.Setenv("UPDATE_GITHUB_REPO", "example/../escape")
+	m := New(t.TempDir(), "2.21.5.2", "http://localhost", "test")
+	defer m.Stop()
+	require.Equal(t, "runtime_source_invalid", m.releaseUnavailableReason())
+	_, err := m.prepare(context.Background())
+	require.ErrorContains(t, err, "runtime_source_invalid")
+}
+
+func TestRuntimeRepositoryChangeDoesNotReuseCachedExecutable(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("UPDATE_GITHUB_REPO", "")
+	original := New(root, "2.21.5.2", "http://localhost", "test")
+	defer original.Stop()
+	require.NoError(t, os.MkdirAll(original.runtimeDir(), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(original.runtimeDir(), "ready"), []byte("cached"), 0600))
+	t.Setenv("UPDATE_GITHUB_REPO", "example/custom-fork")
+	m := New(root, "2.21.5.2", "http://localhost", "test")
+	defer m.Stop()
+	require.NotEqual(t, original.runtimeDir(), m.runtimeDir())
+	requested := false
+	m.client = &http.Client{Transport: transportFunc(func(req *http.Request) (*http.Response, error) {
+		requested = true
+		require.Equal(t, "https://api.github.com/repos/example/custom-fork/releases/tags/v2.21.5.2", req.URL.String())
+		return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
+	})}
+	_, err := m.prepare(context.Background())
+	require.Error(t, err)
+	require.True(t, requested)
 }

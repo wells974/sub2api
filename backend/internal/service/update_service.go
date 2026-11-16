@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -22,6 +21,7 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/releasesource"
 )
 
 var (
@@ -33,10 +33,6 @@ var (
 const (
 	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	// Releases are maintained on the owner-controlled production fork. Keep the
-	// updater independent from the upstream repository so production installs
-	// see our release stream and can update to our fork's assets.
-	defaultGitHubRepo = "wells974/sub2api"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
@@ -50,8 +46,6 @@ const (
 	// Fetch a few extra releases so filtering (current/newer/prerelease) still leaves enough candidates
 	rollbackFetchPageSize = 15
 )
-
-var updateRepoPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$`)
 
 // UpdateCache defines cache operations for update service
 type UpdateCache interface {
@@ -81,14 +75,7 @@ type UpdateService struct {
 
 // NewUpdateService creates a new UpdateService
 func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, version, buildType string) *UpdateService {
-	repo := strings.TrimSpace(os.Getenv("UPDATE_GITHUB_REPO"))
-	if repo == "" {
-		repo = defaultGitHubRepo
-	}
-	var repoError error
-	if !updateRepoPattern.MatchString(repo) || strings.HasSuffix(repo, "/.") || strings.HasSuffix(repo, "/..") {
-		repoError = fmt.Errorf("UPDATE_GITHUB_REPO must be a GitHub owner/repository, without a URL or additional path")
-	}
+	repo, repoError := releasesource.Repository()
 	return &UpdateService{
 		cache:           cache,
 		githubClient:    githubClient,

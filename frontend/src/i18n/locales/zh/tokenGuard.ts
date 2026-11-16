@@ -13,6 +13,19 @@ export default {
   "stop": "停止本批处理",
   "ownedJobs": "仍有登录任务未确认结束，暂时不能关闭此窗口。可继续未完成的记录以恢复查询，或点击“停止本批处理”清理任务；清理失败后可再次尝试。",
   "reset": "导入另一批",
+  "failures": {
+    "workerUnavailable": "登录服务不可用，请在凭证运营页面检查运行状态后重试。",
+    "excelWorkerUnavailable": "BPS 自动授权服务尚未就绪，请在凭证运营页面检查运行状态及运行器版本，或使用手动授权。",
+    "workerPreparing": "正在准备登录运行环境，请等待凭证运营页面显示服务就绪后重试。",
+    "proxyUnavailable": "所选登录代理不可用，请检查代理设置后重试。",
+    "busy": "登录任务已满，请稍后重试。",
+    "inProgress": "此邮箱已有登录任务正在执行，请等待任务结束后重试。",
+    "expired": "登录任务已过期或被删除，请重试。",
+    "invalid": "邮箱、密码或 2FA 密钥格式不正确，请检查后重试。",
+    "encryptionRequired": "请先启用凭据加密，再重试登录。",
+    "encryptionUnavailable": "凭据加密存储不可用，请检查服务端密钥及数据目录权限。",
+    "network": "无法连接服务，请检查网络后重试。"
+  },
   "states": {
     "pending": "待处理",
     "login": "登录中…",

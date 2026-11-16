@@ -115,8 +115,8 @@ func (s *OpenAIOAuthReauthService) checkWorkerMode(mode string) error {
 		return infraerrors.ServiceUnavailable("OPENAI_REAUTH_MODE_UNAVAILABLE", "Email OTP re-login is unavailable in the built-in runtime")
 	}
 	s.EnsureWorker()
-	if s.WorkerStatus().State == "unavailable" {
-		return infraerrors.ServiceUnavailable("OPENAI_REAUTH_WORKER_UNAVAILABLE", "Re-login service is unavailable; see Credential Operations status")
+	if status := s.WorkerStatus(); status.State == "unavailable" {
+		return infraerrors.ServiceUnavailable("OPENAI_REAUTH_WORKER_UNAVAILABLE", "Re-login service is unavailable; see Credential Operations status").WithMetadata(map[string]string{"worker_reason": status.Reason})
 	}
 	return nil
 }

@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/reauthruntime"
 	"github.com/stretchr/testify/require"
 )
 
@@ -156,6 +158,32 @@ func TestExcelInitialLoginPreconditionsAndConcurrentClaim(t *testing.T) {
 	wg.Wait()
 	close(claims)
 	require.Len(t, claims, 1)
+}
+
+func TestExcelInitialLoginRuntimeFailureIsActionable(t *testing.T) {
+	svc, entry := initialExcelFixture(t)
+	svc.excelInitialWorkerSeen.Store(0)
+	// Invalid versions cannot start any download, even on Linux.
+	svc.worker = reauthruntime.New(t.TempDir(), "dev", "http://localhost", "PRIVATE_WORKER_TOKEN")
+	t.Cleanup(svc.stopWorker)
+	job, err := svc.StartExcelInitialLogin(context.Background(), entry, nil)
+	require.Nil(t, job)
+	require.Equal(t, "OPENAI_REAUTH_WORKER_UNAVAILABLE", infraerrors.Reason(err))
+	require.Equal(t, svc.WorkerStatus().Reason, infraerrors.FromError(err).Metadata["worker_reason"])
+	require.NotContains(t, err.Error(), "PRIVATE_")
+	require.Empty(t, svc.excelInitialJobs)
+}
+
+func TestExcelInitialLoginRuntimeNotYetStartedIsPreparing(t *testing.T) {
+	svc, entry := initialExcelFixture(t)
+	svc.excelInitialWorkerSeen.Store(0)
+	svc.worker = reauthruntime.New(t.TempDir(), "2.21.5.2", "http://localhost", "PRIVATE_WORKER_TOKEN")
+	// Freeze the manager in idle so this unit test cannot download a runtime.
+	svc.worker.Stop()
+	job, err := svc.StartExcelInitialLogin(context.Background(), entry, nil)
+	require.Nil(t, job)
+	require.Equal(t, "EXCEL_LOGIN_WORKER_PREPARING", infraerrors.Reason(err))
+	require.Empty(t, svc.excelInitialJobs)
 }
 
 func TestExcelInitialLoginUsesSelectedProxyWithoutExistingAccount(t *testing.T) {

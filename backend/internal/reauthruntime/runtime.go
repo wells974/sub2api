@@ -19,10 +19,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/releasesource"
 )
 
 const maxArchive = 256 << 20
 const maxExtracted = 768 << 20
+
+// Keep in sync with the runtime release builder: upstream X.Y.Z and fork X.Y.Z.N.
+var releaseVersionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?$`)
 
 type Status struct {
 	StartedAt int64  `json:"-"`
@@ -35,6 +40,8 @@ type Manager struct {
 	mu                            sync.Mutex
 	status                        Status
 	root, version, baseURL, token string
+	repository                    string
+	repositoryError               error
 	ctx                           context.Context
 	cancel                        context.CancelFunc
 	done                          chan struct{}
@@ -46,7 +53,9 @@ type Manager struct {
 func New(root, version, baseURL, token string) *Manager {
 	root, _ = filepath.Abs(root)
 	ctx, cancel := context.WithCancel(context.Background())
+	repository, repositoryError := releasesource.Repository()
 	return &Manager{root: root, version: strings.TrimPrefix(version, "v"), baseURL: baseURL, token: token,
+		repository: repository, repositoryError: repositoryError,
 		ctx: ctx, cancel: cancel, client: &http.Client{Timeout: 5 * time.Minute},
 		status: Status{Mode: "managed", State: "idle"}}
 }
@@ -75,9 +84,9 @@ func (m *Manager) Ensure() {
 		m.status.Reason = "unsupported_platform"
 		return
 	}
-	if !regexp.MustCompile(`^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$`).MatchString(m.version) {
+	if reason := m.releaseUnavailableReason(); reason != "" {
 		m.status.State = "unavailable"
-		m.status.Reason = "release_required"
+		m.status.Reason = reason
 		return
 	}
 	m.started = true
@@ -143,18 +152,37 @@ func (m *Manager) run() {
 
 func randomID() string { return fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()) }
 
+func (m *Manager) releaseUnavailableReason() string {
+	if m.repositoryError != nil {
+		return "runtime_source_invalid"
+	}
+	if !releaseVersionPattern.MatchString(m.version) {
+		return "release_required"
+	}
+	return ""
+}
+
+func (m *Manager) runtimeDir() string {
+	// Never reuse an executable cached from a different release repository.
+	source := sha256.Sum256([]byte(m.repository))
+	return filepath.Join(m.root, hex.EncodeToString(source[:]), m.version+"-linux-"+runtime.GOARCH)
+}
+
 func (m *Manager) prepare(ctx context.Context) (string, error) {
-	dir := filepath.Join(m.root, m.version+"-linux-"+runtime.GOARCH)
+	if reason := m.releaseUnavailableReason(); reason != "" {
+		return "", errors.New(reason)
+	}
+	dir := m.runtimeDir()
 	if info, err := os.Stat(filepath.Join(dir, "ready")); err == nil && info.Mode().IsRegular() {
 		return dir, nil
 	}
-	if err := os.MkdirAll(m.root, 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
 		return "", err
 	}
 	// A release digest from the owner repository is required; never execute an
 	// unverified download or follow an arbitrary manifest download URL.
 	name := "sub2api-reauth_" + m.version + "_linux_" + runtime.GOARCH + ".tar.gz"
-	url := "https://api.github.com/repos/ranxi2001/sub2api/releases/tags/v" + m.version
+	url := "https://api.github.com/repos/" + m.repository + "/releases/tags/v" + m.version
 	body, err := m.get(ctx, url, 4<<20)
 	if err != nil {
 		return "", err
@@ -180,7 +208,7 @@ func (m *Manager) prepare(ctx context.Context) (string, error) {
 	if _, err := hex.DecodeString(digest); err != nil {
 		return "", errors.New("invalid runtime digest")
 	}
-	archive, err := m.get(ctx, "https://github.com/ranxi2001/sub2api/releases/download/v"+m.version+"/"+name, maxArchive)
+	archive, err := m.get(ctx, "https://github.com/"+m.repository+"/releases/download/v"+m.version+"/"+name, maxArchive)
 	if err != nil {
 		return "", err
 	}

@@ -165,6 +165,7 @@ sessionExport: {
   runtimeReasons: {
     unsupported_platform: 'This platform does not support the built-in runtime yet.',
     release_required: 'No published runtime matches this development build.',
+    runtime_source_invalid: 'The runtime release repository is invalid. Check UPDATE_GITHUB_REPO.',
     runtime_install_failed: 'Runtime download, verification or preparation failed; it will retry.',
     worker_start_failed: 'The re-login process could not start; it will retry.',
     worker_exited: 'The re-login process exited; it will be restarted.',

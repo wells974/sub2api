@@ -165,6 +165,7 @@ sessionExport: {
   runtimeReasons: {
     unsupported_platform: '此平台暂不支持内置重登运行环境。',
     release_required: '此开发构建没有对应的已发布运行环境。',
+    runtime_source_invalid: '运行环境的发布仓库配置无效，请检查 UPDATE_GITHUB_REPO。',
     runtime_install_failed: '运行环境下载、校验或准备失败，稍后会自动重试。',
     worker_start_failed: '重登进程启动失败，稍后会自动重试。',
     worker_exited: '重登进程意外退出，稍后会自动恢复。',

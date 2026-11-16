@@ -43,6 +43,9 @@ func (s *OpenAIOAuthReauthService) StartExcelInitialLogin(ctx context.Context, e
 		return nil, err
 	}
 	if seen := s.excelInitialWorkerSeen.Load(); seen == 0 || time.Since(time.Unix(0, seen)) > 26*time.Minute {
+		if status := s.WorkerStatus(); status.State == "preparing" || status.State == "idle" {
+			return nil, infraerrors.ServiceUnavailable("EXCEL_LOGIN_WORKER_PREPARING", "BPS automatic login runtime is preparing; retry when Credential Operations shows it is ready")
+		}
 		return nil, infraerrors.ServiceUnavailable("EXCEL_LOGIN_WORKER_UNAVAILABLE", "BPS automatic login worker is not ready; check Credential Operations or use manual authorization")
 	}
 	proxy, err := s.reauthProxyURL(ctx, proxyID)

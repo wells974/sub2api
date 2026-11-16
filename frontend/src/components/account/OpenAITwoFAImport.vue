@@ -18,7 +18,7 @@
     <ul v-if="rows.length" class="space-y-2" aria-live="polite">
       <li v-for="(row, index) in rows" :key="row.entry.email" class="flex justify-between gap-4 text-sm">
         <span>{{ index + 1 }}. {{ row.entry.email }}</span>
-        <span>{{ t(`tokenGuard.twoFA.states.${row.status}`) }}</span>
+        <span>{{ t(row.failureKey || `tokenGuard.twoFA.states.${row.status}`) }}</span>
       </li>
     </ul>
     <div class="flex gap-3">
@@ -60,6 +60,34 @@ type Row = {
   jobId?: string
   cleanup?: Promise<void>
   retiring?: boolean
+  failureKey?: string
+}
+
+// Render only local, allowlisted messages: upstream errors can contain secrets.
+function loginFailureKey(cause: unknown): string | undefined {
+  const error = cause as { reason?: string; code?: string; metadata?: { worker_reason?: string } } | null
+  const reason = error?.reason || error?.code
+  if (reason === 'OPENAI_REAUTH_WORKER_UNAVAILABLE') {
+    const workerReason = error?.metadata?.worker_reason
+    if (workerReason && ['unsupported_platform', 'release_required', 'runtime_source_invalid', 'runtime_install_failed', 'worker_start_failed', 'worker_exited', 'external_not_configured', 'external_offline', 'api_unreachable'].includes(workerReason)) {
+      return `tokenGuardV2.runtimeReasons.${workerReason}`
+    }
+  }
+  const keys: Record<string, string> = {
+    OPENAI_REAUTH_WORKER_UNAVAILABLE: 'workerUnavailable',
+    EXCEL_LOGIN_WORKER_UNAVAILABLE: 'excelWorkerUnavailable',
+    EXCEL_LOGIN_WORKER_PREPARING: 'workerPreparing',
+    EXCEL_LOGIN_PROXY_UNAVAILABLE: 'proxyUnavailable',
+    EXCEL_LOGIN_BUSY: 'busy',
+    EXCEL_LOGIN_IN_PROGRESS: 'inProgress',
+    EXCEL_LOGIN_NOT_FOUND: 'expired',
+    EXCEL_LOGIN_INVALID: 'invalid',
+    OPENAI_REAUTH_ENCRYPTION_KEY_REQUIRED: 'encryptionRequired',
+    CREDENTIAL_ENCRYPTION_STORAGE_FAILED: 'encryptionUnavailable',
+    ERR_NETWORK: 'network',
+  }
+  const key = reason && Object.prototype.hasOwnProperty.call(keys, reason) ? keys[reason] : undefined
+  return key ? `tokenGuard.twoFA.failures.${key}` : undefined
 }
 const raw = ref('')
 const encryptionReady = ref(false)
@@ -163,6 +191,7 @@ async function run() {
 }
 
 async function runRow(row: Row, signal: AbortSignal) {
+  row.failureKey = undefined
   try {
     if (row.retiring) await discardJob(row)
     signal.throwIfAborted()
@@ -210,6 +239,7 @@ async function runRow(row: Row, signal: AbortSignal) {
       (cause as { response?: { status?: number } })?.response?.status
     if (status === 404 && !row.retiring) row.jobId = undefined
     row.status = row.credential ? 'importFailed' : 'failed'
+    if (!row.credential) row.failureKey = loginFailureKey(cause)
   }
   // A polling/cleanup failure has not terminated the server job. Its worker
   // stays reserved rather than dequeuing a fourth live account pipeline.

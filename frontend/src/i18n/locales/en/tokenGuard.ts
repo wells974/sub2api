@@ -13,6 +13,19 @@ export default {
   "stop": "Stop this batch",
   "ownedJobs": "Some login tasks are unresolved, so this window must stay open. Continue unfinished entries to resume them, or stop this batch to clean them up. If cleanup fails, you can try again.",
   "reset": "Import another batch",
+  "failures": {
+    "workerUnavailable": "Login service is unavailable. Check its status in Credential Operations before retrying.",
+    "excelWorkerUnavailable": "BPS automatic authorization is not ready. Check runtime status and version in Credential Operations, or use manual authorization.",
+    "workerPreparing": "The login runtime is being prepared. Retry when Credential Operations shows it is ready.",
+    "proxyUnavailable": "The selected login proxy is unavailable. Check its settings and retry.",
+    "busy": "The login queue is full. Retry later.",
+    "inProgress": "A login for this email is already running. Wait for it to finish before retrying.",
+    "expired": "The login task expired or was deleted. Retry to start again.",
+    "invalid": "Check the format of the email, password and 2FA secret before retrying.",
+    "encryptionRequired": "Enable credential encryption before retrying login.",
+    "encryptionUnavailable": "Credential encryption storage is unavailable. Check the server key and data directory permissions.",
+    "network": "Cannot reach the service. Check your network and retry."
+  },
   "states": {
     "pending": "Pending",
     "login": "Logging in…",
