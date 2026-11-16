@@ -99,6 +99,8 @@ func (h *OpenAIOAuthReauthHandler) ExcelInitialLoginWorkerResult(c *gin.Context)
 	var input struct {
 		WorkerID    string         `json:"worker_id" binding:"required,max=128"`
 		Credentials map[string]any `json:"credentials"`
+		ErrorCode   string         `json:"error_code"`
+		ErrorStage  string         `json:"error_stage"`
 	}
 	if c.ShouldBindJSON(&input) != nil {
 		response.BadRequest(c, "Invalid worker request")
@@ -118,15 +120,16 @@ func (h *OpenAIOAuthReauthHandler) ExcelInitialLoginWorkerResult(c *gin.Context)
 		return
 	}
 	if action == "fail" {
-		input.Credentials = nil
+		if err := h.service.FailExcelInitialLogin(id, input.WorkerID, input.ErrorCode, input.ErrorStage); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		response.Success(c, gin.H{"status": "failed"})
+		return
 	}
 	if err := h.service.FinishExcelInitialLogin(id, input.WorkerID, input.Credentials); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	status := "succeeded"
-	if action == "fail" {
-		status = "failed"
-	}
-	response.Success(c, gin.H{"status": status})
+	response.Success(c, gin.H{"status": "succeeded"})
 }

@@ -22,6 +22,7 @@ COPY tools/openai_excel_oauth_adapter.py tools/openai_excel_2fa_login.py tools/t
 COPY tools/openai_excel_password_flow.mjs tools/test_openai_excel_password_flow.mjs /build/tools/
 COPY tools/openai_siwc_oauth_adapter.py tools/openai_siwc_password_flow.mjs tools/test_openai_siwc_oauth_adapter.py tools/test_openai_siwc_password_flow.mjs /build/tools/
 COPY tools/fixtures/siwc-http-transport.mjs /build/tools/fixtures/
+COPY tools/fixtures/excel-http-transport.mjs /build/tools/fixtures/
 COPY tools/fixtures/codex-http-transport.mjs /build/tools/fixtures/
 COPY tools/fixtures/session-studio/ /build/tools/fixtures/session-studio/
 COPY tools/fixtures/credential-operation-errors.json /build/tools/fixtures/credential-operation-errors.json

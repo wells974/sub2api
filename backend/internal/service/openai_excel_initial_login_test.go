@@ -197,3 +197,34 @@ func TestExcelInitialLoginUsesSelectedProxyWithoutExistingAccount(t *testing.T) 
 	require.Equal(t, "socks5h://203.0.113.9:1080", claim.ProxyURL)
 	require.Zero(t, claim.AccountID)
 }
+
+func TestExcelInitialLoginFailureDetailsAreSafeAndOwned(t *testing.T) {
+	for _, tc := range []struct{ code, stage, wantCode, wantStage string }{
+		{"transport_error", "protocol_connecting", "transport_error", "protocol_connecting"},
+		{"password_rejected", "web_login", "password_rejected", "web_login"},
+		{"PRIVATE_PASSWORD", "PRIVATE_TOKEN", "worker_failed", "starting"},
+		{"", "", "worker_failed", "starting"}, // Older workers remain compatible.
+	} {
+		t.Run(tc.wantCode+tc.code, func(t *testing.T) {
+			svc, entry := initialExcelFixture(t)
+			job, err := svc.StartExcelInitialLogin(context.Background(), entry, nil)
+			require.NoError(t, err)
+			claim, err := svc.ClaimExcelInitialLogin("worker-1")
+			require.NoError(t, err)
+			require.NotNil(t, claim)
+			require.Error(t, svc.FailExcelInitialLogin(claim.TaskID, "other-worker", tc.code, tc.stage))
+			require.NoError(t, svc.FailExcelInitialLogin(claim.TaskID, "worker-1", tc.code, tc.stage))
+			view, err := svc.GetExcelInitialLogin(claim.TaskID)
+			require.NoError(t, err)
+			require.Equal(t, job.ID, view.ID)
+			require.Equal(t, "failed", view.Status)
+			require.Equal(t, tc.wantCode, view.ErrorCode)
+			require.Equal(t, tc.wantStage, view.ErrorStage)
+			raw, err := json.Marshal(view)
+			require.NoError(t, err)
+			require.NotContains(t, string(raw), "PRIVATE_")
+			require.Nil(t, view.Credential)
+			require.Error(t, svc.FailExcelInitialLogin(claim.TaskID, "worker-1", "timeout", "web_login"))
+		})
+	}
+}

@@ -184,3 +184,29 @@ it.each([
   expect(wrapper.text()).toContain('tokenGuard.twoFA.states.created')
   expect(importCredential).toHaveBeenCalledTimes(1)
 })
+
+it.each([
+  ['transport_error', 'protocol_connecting', 'tokenGuard.twoFA.excelFailures.transport_error'],
+  ['password_rejected', 'web_login', 'tokenGuard.twoFA.excelFailures.password_rejected'],
+  ['totp_rejected', 'mfa_challenge', 'tokenGuard.twoFA.excelFailures.totp_rejected'],
+  ['runtime_error', 'starting', 'tokenGuard.twoFA.excelFailures.runtime_error'],
+  ['PRIVATE_TOKEN', 'PRIVATE_PASSWORD', 'tokenGuard.twoFA.states.failed'],
+  [undefined, undefined, 'tokenGuard.twoFA.states.failed'],
+])('shows failed BPS job diagnostics safely (%s)', async (errorCode, errorStage, key) => {
+  vi.mocked(startExcelTwoFALogin).mockResolvedValue({ id: 'failed-job', status: 'running' })
+  vi.mocked(getExcelTwoFALogin).mockResolvedValue({ id: 'failed-job', status: 'failed', error_code: errorCode, error_stage: errorStage })
+  vi.mocked(deleteExcelTwoFALogin).mockResolvedValue()
+  const importCredential = vi.fn().mockResolvedValue('created')
+  const wrapper = mount(OpenAITwoFAImport, { props: { importCredential, excelOauth: true } })
+  await start(wrapper, 'a@example.com----password----totp')
+  expect(wrapper.text()).toContain(key)
+  expect(wrapper.text()).not.toContain('PRIVATE_')
+  expect(importCredential).not.toHaveBeenCalled()
+  expect(deleteExcelTwoFALogin).toHaveBeenCalledWith('failed-job')
+  vi.mocked(getExcelTwoFALogin).mockResolvedValue({ id: 'failed-job', status: 'succeeded', credential: { access_token: 'mock' } })
+  await wrapper.get('[data-testid="two-fa-start"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).not.toContain(key)
+  expect(wrapper.text()).not.toContain('tokenGuard.twoFA.failureStage')
+  expect(wrapper.text()).toContain('tokenGuard.twoFA.states.created')
+})

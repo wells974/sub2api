@@ -18,7 +18,10 @@
     <ul v-if="rows.length" class="space-y-2" aria-live="polite">
       <li v-for="(row, index) in rows" :key="row.entry.email" class="flex justify-between gap-4 text-sm">
         <span>{{ index + 1 }}. {{ row.entry.email }}</span>
-        <span>{{ t(row.failureKey || `tokenGuard.twoFA.states.${row.status}`) }}</span>
+        <span>
+          {{ t(row.failureKey || `tokenGuard.twoFA.states.${row.status}`) }}
+          <span v-if="row.failureStageKey">{{ t('tokenGuard.twoFA.failureStage', { stage: t(row.failureStageKey) }) }}</span>
+        </span>
       </li>
     </ul>
     <div class="flex gap-3">
@@ -61,7 +64,14 @@ type Row = {
   cleanup?: Promise<void>
   retiring?: boolean
   failureKey?: string
+  failureStageKey?: string
 }
+
+const excelFailureCodes = ['runtime_error', 'transport_error', 'security_check', 'additional_verification',
+  'password_rejected', 'totp_rejected', 'callback_state_mismatch', 'workspace_not_listed', 'client_id',
+  'session_selection', 'protocol_error', 'timeout', 'invalid_credentials', 'worker_failed', 'credential_storage_failed']
+const excelFailureStages = ['starting', 'protocol_connecting', 'web_login', 'password_accepted', 'mfa_challenge',
+  'mfa_accepted', 'excel_authorize', 'excel_token_exchange', 'applying_credentials']
 
 // Render only local, allowlisted messages: upstream errors can contain secrets.
 function loginFailureKey(cause: unknown): string | undefined {
@@ -74,6 +84,7 @@ function loginFailureKey(cause: unknown): string | undefined {
     }
   }
   const keys: Record<string, string> = {
+    OPENAI_REAUTH_UNAVAILABLE: 'workerUnavailable',
     OPENAI_REAUTH_WORKER_UNAVAILABLE: 'workerUnavailable',
     EXCEL_LOGIN_WORKER_UNAVAILABLE: 'excelWorkerUnavailable',
     EXCEL_LOGIN_WORKER_PREPARING: 'workerPreparing',
@@ -192,6 +203,7 @@ async function run() {
 
 async function runRow(row: Row, signal: AbortSignal) {
   row.failureKey = undefined
+  row.failureStageKey = undefined
   try {
     if (row.retiring) await discardJob(row)
     signal.throwIfAborted()
@@ -211,6 +223,12 @@ async function runRow(row: Row, signal: AbortSignal) {
         signal.throwIfAborted()
       }
       if (job.status !== 'succeeded' || !job.credential) {
+        if (props.excelOauth && job.error_code && excelFailureCodes.includes(job.error_code)) {
+          row.failureKey = `tokenGuard.twoFA.excelFailures.${job.error_code}`
+        }
+        if (props.excelOauth && job.error_stage && excelFailureStages.includes(job.error_stage)) {
+          row.failureStageKey = `tokenGuard.twoFA.excelStages.${job.error_stage}`
+        }
         await discardJob(row)
         throw new Error('login_failed')
       }
@@ -226,6 +244,8 @@ async function runRow(row: Row, signal: AbortSignal) {
     row.entry.mfa_secret = ''
   } catch (cause: unknown) {
     if (signal.aborted) {
+      row.failureKey = undefined
+      row.failureStageKey = undefined
       try {
         if (!row.retiring || row.cleanup) await discardJob(row)
       } catch {
@@ -239,7 +259,7 @@ async function runRow(row: Row, signal: AbortSignal) {
       (cause as { response?: { status?: number } })?.response?.status
     if (status === 404 && !row.retiring) row.jobId = undefined
     row.status = row.credential ? 'importFailed' : 'failed'
-    if (!row.credential) row.failureKey = loginFailureKey(cause)
+    if (!row.credential) row.failureKey ||= loginFailureKey(cause)
   }
   // A polling/cleanup failure has not terminated the server job. Its worker
   // stays reserved rather than dequeuing a fourth live account pipeline.

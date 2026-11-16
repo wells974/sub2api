@@ -1,4 +1,6 @@
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -25,7 +27,8 @@ class ExcelInitialLoginTests(unittest.TestCase):
         base._post.assert_called_with('/api/v1/internal/openai-reauth/123/initial-excel/result',
                                       {'worker_id': 'worker', 'credentials': {'access_token': 'synthetic'}})
         api.fail(123)
-        base._post.assert_called_with('/api/v1/internal/openai-reauth/123/initial-excel/fail', {'worker_id': 'worker'})
+        base._post.assert_called_with('/api/v1/internal/openai-reauth/123/initial-excel/fail',
+                                      {'worker_id': 'worker', 'error_code': 'worker_failed', 'error_stage': 'starting'})
 
     def test_canceled_runner_is_terminated_without_returning_credentials(self):
         api = worker.InitialExcelAPI(self.api())
@@ -93,3 +96,43 @@ class ExcelInitialLoginTests(unittest.TestCase):
         with patch.object(worker, 'process_session_export_claim') as process:
             self.assertTrue(worker.run_once(api, None))
         process.assert_called_once()
+
+    def test_failure_details_never_include_raw_exception_text(self):
+        for error in (RuntimeError('PRIVATE_PASSWORD'), worker.WorkerError('PRIVATE_TOKEN'),
+                      worker.WorkerError('Excel password/TOTP login failed (stage=private, reason=private, exit=1)')):
+            code, stage = worker.initial_excel_failure(error, 'PRIVATE_STAGE')
+            self.assertEqual((code, stage), ('worker_failed', 'starting'))
+        self.assertEqual(worker.initial_excel_failure(worker.WorkerError('password/TOTP protocol timed out'),
+                                                    'protocol_connecting'), ('timeout', 'protocol_connecting'))
+
+    @unittest.skipUnless(os.getenv('EXCEL_TEST_TOSUB2_ROOT'), 'set EXCEL_TEST_TOSUB2_ROOT to the pinned dependency')
+    def test_real_cli_reports_initial_login_results_without_mocking_login_helpers(self):
+        prepare = adapter.prepare_excel_runtime
+        def offline_prepare(root, temporary):
+            script = prepare(root, temporary)
+            shutil.copyfile(Path(__file__).parent/'fixtures/excel-http-transport.mjs', script.with_name('tls-transport.mjs'))
+            return script
+        for mode, code in [('success', None), ('password', 'password_rejected'), ('totp', 'totp_rejected'),
+                           ('additional', 'additional_verification'), ('transport', 'transport_error'),
+                           ('security', 'security_check'), ('wrong-state', 'callback_state_mismatch')]:
+            with self.subTest(mode=mode):
+                api = self.api()
+                api.config.tosub2_root = Path(os.environ['EXCEL_TEST_TOSUB2_ROOT'])
+                api.claim = Mock(return_value=None)
+                api.claim_initial_excel = Mock(return_value={
+                    'task_id': 123, 'account_id': 0, 'oauth_profile': 'excel', 'engine': 'local_worker',
+                    'login_email': 'test@example.test', 'password': 'synthetic-password', 'totp_secret': 'JBSWY3DPEHPK3PXP'})
+                with patch.object(adapter, 'prepare_excel_runtime', side_effect=offline_prepare), patch.dict(
+                        os.environ, {'EXCEL_TEST_MODE': mode}), self.assertLogs(worker.LOGGER, level='INFO') as logs:
+                    self.assertTrue(worker.run_once(api, None))
+                self.assertNotIn('PRIVATE_TOKEN', str(logs.output))
+                self.assertNotIn('synthetic-password', str(logs.output))
+                callbacks = [call for call in api._post.call_args_list if call.args[0].endswith(('/result', '/fail'))]
+                self.assertEqual(len(callbacks), 1)
+                if code is None:
+                    self.assertTrue(callbacks[0].args[0].endswith('/result'))
+                    adapter.validate_excel_credentials(callbacks[0].args[1]['credentials'], 'test@example.test')
+                else:
+                    self.assertTrue(callbacks[0].args[0].endswith('/fail'))
+                    self.assertEqual(callbacks[0].args[1]['error_code'], code)
+                    self.assertIn(callbacks[0].args[1]['error_stage'], worker.EXCEL_FAILURE_STAGES)

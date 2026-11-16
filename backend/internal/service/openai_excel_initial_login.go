@@ -20,6 +20,7 @@ import (
 type excelInitialLogin struct {
 	id                                   int64
 	email, worker, status, input, result string
+	errorCode, errorStage                string
 	expiry                               *time.Timer
 	expiresAt                            time.Time
 }
@@ -94,7 +95,7 @@ func (s *OpenAIOAuthReauthService) GetExcelInitialLogin(id int64) (*OpenAITwoFAL
 	if job == nil || !time.Now().Before(job.expiresAt) {
 		return nil, infraerrors.NotFound("EXCEL_LOGIN_NOT_FOUND", "Login task expired or was deleted")
 	}
-	view := &OpenAITwoFALoginJob{ID: strconv.FormatInt(id, 10), Status: job.status}
+	view := &OpenAITwoFALoginJob{ID: strconv.FormatInt(id, 10), Status: job.status, ErrorCode: job.errorCode, ErrorStage: job.errorStage}
 	if job.result != "" {
 		raw, err := s.encryptor.Decrypt(job.result)
 		if err != nil || json.Unmarshal([]byte(raw), &view.Credential) != nil {
@@ -133,6 +134,7 @@ func (s *OpenAIOAuthReauthService) ClaimExcelInitialLogin(worker string) (*OpenA
 		var input excelInitialInput
 		if err != nil || json.Unmarshal([]byte(raw), &input) != nil {
 			job.status = "failed"
+			job.errorCode, job.errorStage = "credential_storage_failed", "starting"
 			job.input = ""
 			continue
 		}
@@ -152,19 +154,19 @@ func (s *OpenAIOAuthReauthService) ExcelInitialLoginActive(id int64, worker stri
 
 // A callback cannot write to an account or revive a canceled/expired task.
 func (s *OpenAIOAuthReauthService) FinishExcelInitialLogin(id int64, worker string, credentials map[string]any) error {
+	if credentials == nil {
+		return s.FailExcelInitialLogin(id, worker, "worker_failed", "starting")
+	}
 	s.excelInitialMu.Lock()
 	defer s.excelInitialMu.Unlock()
 	job := s.excelInitialJobs[id]
 	if job == nil || !time.Now().Before(job.expiresAt) || job.status != "running" || worker == "" || job.worker != worker {
 		return infraerrors.New(http.StatusConflict, "EXCEL_LOGIN_NOT_ACTIVE", "Login task is no longer active")
 	}
-	if credentials == nil {
-		job.status = "failed"
-		return nil
-	}
 	info, err := excelOAuthTokenInfo(credentials)
 	if err != nil || !strings.EqualFold(info.Email, job.email) {
 		job.status = "failed"
+		job.errorCode, job.errorStage = "invalid_credentials", "applying_credentials"
 		return infraerrors.BadRequest("EXCEL_LOGIN_IDENTITY_MISMATCH", "BPS credentials do not match the requested account")
 	}
 	// Build a fresh allowlisted result; worker-provided configuration is ignored.
@@ -176,8 +178,34 @@ func (s *OpenAIOAuthReauthService) FinishExcelInitialLogin(id int64, worker stri
 	}
 	if err != nil {
 		job.status = "failed"
+		job.errorCode, job.errorStage = "credential_storage_failed", "applying_credentials"
 		return credentialEncryptionStorageError()
 	}
 	job.status = "succeeded"
+	return nil
+}
+
+// Only bounded public diagnostics survive the private worker callback.
+func (s *OpenAIOAuthReauthService) FailExcelInitialLogin(id int64, worker, code, stage string) error {
+	s.excelInitialMu.Lock()
+	defer s.excelInitialMu.Unlock()
+	job := s.excelInitialJobs[id]
+	if job == nil || !time.Now().Before(job.expiresAt) || job.status != "running" || worker == "" || job.worker != worker {
+		return infraerrors.New(http.StatusConflict, "EXCEL_LOGIN_NOT_ACTIVE", "Login task is no longer active")
+	}
+	switch code {
+	case "runtime_error", "transport_error", "security_check", "additional_verification",
+		"password_rejected", "totp_rejected", "callback_state_mismatch", "workspace_not_listed",
+		"client_id", "session_selection", "protocol_error", "timeout", "invalid_credentials", "worker_failed":
+	default:
+		code = "worker_failed"
+	}
+	switch stage {
+	case "starting", "protocol_connecting", "web_login", "password_accepted", "mfa_challenge",
+		"mfa_accepted", "excel_authorize", "excel_token_exchange", "applying_credentials":
+	default:
+		stage = "starting"
+	}
+	job.status, job.errorCode, job.errorStage = "failed", code, stage
 	return nil
 }

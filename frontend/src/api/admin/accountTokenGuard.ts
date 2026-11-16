@@ -27,6 +27,8 @@ export interface TwoFALoginJob {
   id: string
   status: 'running' | 'succeeded' | 'failed'
   credential?: Record<string, unknown>
+  error_code?: string
+  error_stage?: string
 }
 
 const twoFALoginPath = '/admin/account-ops/token-guard/two-fa-login'
