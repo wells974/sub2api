@@ -7,12 +7,13 @@ import { getCredentialEncryption, initializeCredentialEncryption } from '@/api/a
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import OpenAITwoFAImport from '../OpenAITwoFAImport.vue'
-import { deleteTwoFALogin, getTwoFALogin, startTwoFALogin } from '@/api/admin/accountTokenGuard'
+import { deleteTwoFALogin, getTwoFALogin, startTwoFALogin, startExcelTwoFALogin, getExcelTwoFALogin, deleteExcelTwoFALogin } from '@/api/admin/accountTokenGuard'
 
 vi.mock('vue-i18n', async importOriginal => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/api/admin/accountTokenGuard', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/admin/accountTokenGuard')>(),
   startTwoFALogin: vi.fn(), getTwoFALogin: vi.fn(), deleteTwoFALogin: vi.fn(),
+  startExcelTwoFALogin: vi.fn(), getExcelTwoFALogin: vi.fn(), deleteExcelTwoFALogin: vi.fn(),
 }))
 enableAutoUnmount(afterEach)
 beforeEach(() => {
@@ -112,4 +113,43 @@ it('blocks 2FA login and account creation until encryption initialization succee
   await wrapper.get('[data-testid="two-fa-start"]').trigger('click')
   await flushPromises()
   expect(importCredential).toHaveBeenCalledTimes(1)
+})
+
+
+describe('BPS initial 2FA import', () => {
+  it('uses the Excel queue and selected proxy, then retries import without repeating authorization', async () => {
+    const credential = { access_token: 'excel-at', client_id: 'app_fnr0pYvVwwFDocDumLG3H2Bp' }
+    vi.mocked(startExcelTwoFALogin).mockResolvedValue({ id: 'excel-job', status: 'running' })
+    vi.mocked(getExcelTwoFALogin).mockResolvedValue({ id: 'excel-job', status: 'succeeded', credential })
+    vi.mocked(deleteExcelTwoFALogin).mockResolvedValue()
+    const importCredential = vi.fn().mockRejectedValueOnce(new Error('PRIVATE_ERROR')).mockResolvedValueOnce('created')
+    const wrapper = mount(OpenAITwoFAImport, { props: { importCredential, excelOauth: true, proxyId: 12 } })
+    await start(wrapper, 'bps@example.com----password----totp')
+    expect(startExcelTwoFALogin).toHaveBeenCalledWith({ email: 'bps@example.com', password: 'password', mfa_secret: 'totp' }, 12)
+    expect(deleteExcelTwoFALogin).toHaveBeenCalledWith('excel-job')
+    expect(startTwoFALogin).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('PRIVATE_ERROR')
+    await wrapper.get('[data-testid="two-fa-start"]').trigger('click')
+    await flushPromises()
+    expect(startExcelTwoFALogin).toHaveBeenCalledTimes(1)
+    expect(importCredential).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('tokenGuard.twoFA.states.created')
+  })
+
+  it('retires an accepted Excel job when stop races with its POST response', async () => {
+    let accept!: (job: { id: string; status: 'running' }) => void
+    vi.mocked(startExcelTwoFALogin).mockImplementation(() => new Promise(resolve => { accept = resolve }))
+    vi.mocked(deleteExcelTwoFALogin).mockResolvedValue()
+    const importCredential = vi.fn()
+    const wrapper = mount(OpenAITwoFAImport, { props: { importCredential, excelOauth: true } })
+    await start(wrapper, 'bps@example.com----password----totp')
+    await wrapper.get('[data-testid="two-fa-stop"]').trigger('click')
+    // A parent reset must not redirect cleanup into the Codex job namespace.
+    await wrapper.setProps({ excelOauth: false })
+    accept({ id: 'late-excel-job', status: 'running' })
+    await flushPromises()
+    expect(deleteExcelTwoFALogin).toHaveBeenCalledWith('late-excel-job')
+    expect(importCredential).not.toHaveBeenCalled()
+    expect(getExcelTwoFALogin).not.toHaveBeenCalled()
+  })
 })

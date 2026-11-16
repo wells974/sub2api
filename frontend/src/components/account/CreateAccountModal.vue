@@ -54,7 +54,7 @@
         <input
           v-model="form.name"
           type="text"
-          :required="!isGrokSSOInputMethod && !isOpenAITwoFA"
+          :required="!isGrokSSOInputMethod && !usesTwoFALogin"
           class="input"
           :placeholder="t('admin.accounts.enterAccountName')"
           data-tour="account-form-name"
@@ -482,9 +482,19 @@
             </div>
           </button>
         </div>
-        <p v-if="isOpenAITwoFA" class="input-hint">{{ t('tokenGuard.twoFA.nameHint') }}</p>
+        <p v-if="usesTwoFALogin" class="input-hint">{{ t('tokenGuard.twoFA.nameHint') }}</p>
         <div v-if="isOpenAIBPSOAuth" class="mt-3 space-y-2" data-testid="bps-oauth-models">
           <p class="input-hint">{{ t('admin.accounts.oauth.openai.excelLoginHint') }}</p>
+          <div class="flex flex-wrap gap-4">
+            <label class="flex items-center gap-2 text-sm">
+              <input v-model="bpsLoginMethod" type="radio" value="manual" data-testid="bps-login-manual" />
+              {{ t('admin.accounts.oauth.openai.excelManualLogin') }}
+            </label>
+            <label class="flex items-center gap-2 text-sm">
+              <input v-model="bpsLoginMethod" type="radio" value="two_fa" data-testid="bps-login-two-fa" />
+              {{ t('admin.accounts.oauth.openai.excelAutoLogin') }}
+            </label>
+          </div>
           <label class="input-label">{{ t('admin.accounts.openai.excelBPSModels') }}</label>
           <ModelWhitelistSelector v-model="bpsOAuthModels" platform="openai" />
         </div>
@@ -3957,7 +3967,7 @@
 
     <!-- Step 2: OAuth Authorization -->
     <div v-else class="space-y-5">
-      <OpenAITwoFAImport v-if="isOpenAITwoFA" :import-credential="importTwoFACredential" @busy="twoFABusy = $event" />
+      <OpenAITwoFAImport v-if="usesTwoFALogin" :excel-oauth="isOpenAIBPSOAuth" :proxy-id="form.proxy_id" :import-credential="importTwoFACredential" @busy="twoFABusy = $event" />
       <OAuthAuthorizationFlow
         v-else
         ref="oauthFlowRef"
@@ -4039,11 +4049,11 @@
         </button>
       </div>
       <div v-else class="flex justify-between gap-3">
-        <button type="button" class="btn btn-secondary" :disabled="twoFABusy" @click="isOpenAITwoFA ? handleClose() : goBackToBasicInfo()">
+        <button type="button" class="btn btn-secondary" :disabled="twoFABusy" @click="usesTwoFALogin ? handleClose() : goBackToBasicInfo()">
           {{ t('common.back') }}
         </button>
         <button
-          v-if="!isOpenAITwoFA && isManualInputMethod"
+          v-if="!usesTwoFALogin && isManualInputMethod"
           type="button"
           :disabled="!canExchangeCode"
           class="btn btn-primary"
@@ -4630,6 +4640,8 @@ const isOpenAIBPSOAuth = computed(() => form.platform === 'openai' && accountCat
 // Includes unresolved login ownership while the importer is paused for Retry.
 const twoFABusy = ref(false)
 const isOpenAITwoFA = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiTwoFA.value)
+const bpsLoginMethod = ref<'manual' | 'two_fa'>('manual')
+const usesTwoFALogin = computed(() => isOpenAITwoFA.value || (isOpenAIBPSOAuth.value && bpsLoginMethod.value === 'two_fa'))
 // 「降智后自动开启 BPS」：OpenAI OAuth / 2FA 添加时可选，账号建好后按这里的设置给每个新账号建一条质量运维规则。
 const autoBPS = useAccountAutoBPS()
 const globalBpsEnabled = computed(() => appStore.cachedPublicSettings?.excel_bps_enabled !== false)
@@ -6006,6 +6018,7 @@ const resetForm = () => {
   initialChannelConfirmed.value = false
   pendingChannelCreations.clear()
   step.value = 1
+  bpsLoginMethod.value = 'manual'
   openaiTwoFA.value = false
   openaiBPSOAuth.value = false
   bpsOAuthModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
@@ -6403,7 +6416,7 @@ const handleSubmit = async () => {
   }
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {
-    if (!isGrokSSOInputMethod.value && !isOpenAITwoFA.value && !form.name.trim()) {
+    if (!isGrokSSOInputMethod.value && !usesTwoFALogin.value && !form.name.trim()) {
       appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
       return
     }
@@ -7264,10 +7277,12 @@ const isAgentIdentityImportContent = (content: string) => {
 // Reuse Session import normalization and identity deduplication after 2FA login.
 const importTwoFACredential = async (credential: Record<string, unknown>, email: string, login: TokenGuardReloginAccount, signal?: AbortSignal): Promise<'created' | 'skipped'> => {
   signal?.throwIfAborted()
+  const excel = isOpenAIBPSOAuth.value
+  if (excel && credential.client_id !== OPENAI_EXCEL_OAUTH_CLIENT_ID) throw new Error('invalid_excel_credentials')
   const credentialExtras = buildOpenAICodexImportCredentialExtras()
   if (credentialExtras === null) throw new Error('invalid_account_settings')
   const result = await importWithUpstream({
-    initialize_openai_two_fa: true,
+    ...(!excel ? { initialize_openai_two_fa: true } : {}),
     content: JSON.stringify(credential),
     name: form.name.trim() ? `${form.name.trim()} (${email})` : email,
     notes: form.notes || null,
@@ -7294,7 +7309,8 @@ const importTwoFACredential = async (credential: Record<string, unknown>, email:
     .map(item => item.account_id)
     .filter((id): id is number => typeof id === 'number' && id > 0))]
   if (!accountIds.length) throw new Error('import_missing_account_id')
-  for (const accountId of accountIds) {
+  // Standalone Excel grants refresh independently; never enroll them in Codex re-login.
+  for (const accountId of excel ? [] : accountIds) {
     signal?.throwIfAborted()
     const enrollment = {
       account_id: accountId, login_email: login.email,

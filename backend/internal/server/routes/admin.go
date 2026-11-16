@@ -586,6 +586,8 @@ func registerOpenAIOAuthReauthWorkerRoutes(v1 *gin.RouterGroup, h *handler.Handl
 	worker := v1.Group("/internal/openai-reauth")
 	{
 		worker.POST("/claim", h.Admin.OpenAIOAuthReauth.Claim)
+		worker.POST("/initial-excel/claim", h.Admin.OpenAIOAuthReauth.ClaimExcelInitialLogin)
+		worker.POST("/:task_id/initial-excel/:action", h.Admin.OpenAIOAuthReauth.ExcelInitialLoginWorkerResult)
 		worker.POST("/session-export/claim", h.Admin.OpenAIOAuthReauth.ClaimSessionExport)
 		worker.POST("/:task_id/session-export/progress", h.Admin.OpenAIOAuthReauth.SessionExportProgress)
 		worker.POST("/:task_id/session-export/result", h.Admin.OpenAIOAuthReauth.SessionExportResult)
@@ -971,6 +973,9 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.POST("/account-ops/token-guard/jobs/:id/cancel", h.Admin.AccountTokenGuard.Cancel)
 	admin.GET("/account-ops/token-guard/events", h.Admin.AccountTokenGuard.Events)
 	admin.POST("/account-ops/token-guard/accounts/:id/relogin", h.Admin.AccountTokenGuard.Relogin)
+	admin.POST("/account-ops/initial-excel-login", h.Admin.OpenAIOAuthReauth.StartExcelInitialLogin)
+	admin.GET("/account-ops/initial-excel-login/:id", h.Admin.OpenAIOAuthReauth.GetExcelInitialLogin)
+	admin.DELETE("/account-ops/initial-excel-login/:id", h.Admin.OpenAIOAuthReauth.DeleteExcelInitialLogin)
 	admin.POST("/account-ops/token-guard/two-fa-login", h.Admin.AccountTokenGuard.StartTwoFALogin)
 	admin.GET("/account-ops/token-guard/two-fa-login/:id", h.Admin.AccountTokenGuard.TwoFALogin)
 	admin.DELETE("/account-ops/token-guard/two-fa-login/:id", h.Admin.AccountTokenGuard.DeleteTwoFALogin)

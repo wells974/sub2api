@@ -477,6 +477,13 @@ class WorkerAPI:
         )
         return data if isinstance(data, dict) else None
 
+    def claim_initial_excel(self) -> dict[str, Any] | None:
+        if self.config.tosub2_root is None:
+            return None
+        data = self._post("/api/v1/internal/openai-reauth/initial-excel/claim",
+                          {"worker_id": self.config.worker_id})
+        return data if isinstance(data, dict) else None
+
     def claim_session_export(self) -> dict[str, Any] | None:
         data = self._post(
             "/api/v1/internal/openai-reauth/session-export/claim",
@@ -1282,6 +1289,68 @@ def _siwc_password_failure(output: str, exit_code: int) -> str:
     return f"SIWC authorization failed (stage={stage}, reason={reason}, exit={exit_code}); credentials retained{guidance}"
 
 
+class InitialExcelAPI:
+    """Reuse the password runner without access to account mutation callbacks."""
+    def __init__(self, api):
+        self.api, self.config = api, api.config
+
+    def _post(self, task_id, action, **payload):
+        return self.api._post(f"/api/v1/internal/openai-reauth/{task_id}/initial-excel/{action}",
+                              {"worker_id": self.config.worker_id, **payload})
+
+    def active(self, task_id):
+        result = self._post(task_id, "active")
+        return isinstance(result, dict) and result.get("active") is True
+
+    def progress(self, task_id, stage):
+        if not self.active(task_id):
+            raise WorkerError("initial Excel login canceled or expired")
+
+    def credentials(self, task_id, credentials, extra=None):
+        return self._post(task_id, "result", credentials=credentials)
+
+    def fail(self, task_id):
+        return self._post(task_id, "fail")
+
+
+def run_initial_excel_process(api, task_id, command, **options):
+    """Retire a canceled runner without escaping managed process-group teardown."""
+    if not api.active(task_id):
+        raise WorkerError("initial Excel login canceled or expired")
+    deadline = time.monotonic() + options.pop("timeout")
+    options.pop("check", None)
+    # Keep the inherited worker group: API shutdown kills Node/TLS descendants.
+    process = subprocess.Popen(command, **options)
+    completed = False
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, 0)
+            try:
+                stdout, stderr = process.communicate(timeout=min(2, remaining))
+                completed = True
+                if not api.active(task_id):
+                    raise WorkerError("initial Excel login canceled or expired")
+                return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired:
+                if not api.active(task_id):
+                    raise WorkerError("initial Excel login canceled or expired")
+    finally:
+        if not completed:
+            if process.poll() is None:
+                process.kill()
+            # Closing the runner also closes its private TLS transport pipes.
+            # Do not wait indefinitely for an inherited output descriptor.
+            try:
+                process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                for pipe in (process.stdout, process.stderr):
+                    if pipe is not None:
+                        pipe.close()
+                process.wait(timeout=5)
+
+
 def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
     oauth_profile = str(claim.get("oauth_profile") or "codex")
     if oauth_profile not in {"codex", "excel", "siwc"}:
@@ -1301,7 +1370,8 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
     totp_secret = str(claim.get("totp_secret") or "").strip()
     proxy_url = str(claim.get("proxy_url") or "").strip()
     root = getattr(getattr(api, "config", None), "tosub2_root", None)
-    if task_id <= 0 or account_id <= 0 or not email or not password:
+    initial_excel = isinstance(api, InitialExcelAPI) and oauth_profile == "excel" and account_id == 0
+    if task_id <= 0 or (account_id <= 0 and not initial_excel) or not email or not password or (initial_excel and not totp_secret):
         raise WorkerError("claimed password task is missing required fields")
     if root is None:
         raise WorkerError("TOSUB2_ROOT is required for password/TOTP re-login")
@@ -1405,7 +1475,8 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
             child_env.pop("CHATGPT_TOTP_SECRET", None)
         protocol_started = time.monotonic()
         try:
-            result = subprocess.run(
+            run = (lambda command, **options: run_initial_excel_process(api, task_id, command, **options)) if initial_excel else subprocess.run
+            result = run(
                 command,
                 cwd=temp_dir,
                 env=child_env,
@@ -1628,6 +1699,27 @@ def run_once(api: WorkerAPI, protocol: SimpleNamespace | None) -> bool:
     except WorkerError as exc:
         LOGGER.warning("claim failed: %s", safe_worker_failure(exc))
         return False
+    if not claim and callable(getattr(api, "claim_initial_excel", None)):
+        try:
+            initial = api.claim_initial_excel()
+        except WorkerError:
+            initial = None  # Older servers do not expose this optional queue.
+        if isinstance(initial, dict) and initial:
+            initial_api = InitialExcelAPI(api)
+            task_id = int(initial.get("task_id") or 0)
+            try:
+                if initial.get("oauth_profile") != "excel" or initial.get("account_id") != 0:
+                    raise WorkerError("invalid initial Excel task")
+                process_password_claim(initial_api, initial)
+            except Exception:
+                # Initial credentials and raw protocol errors never enter logs.
+                LOGGER.warning("initial Excel task=%s failed or canceled", task_id)
+                if task_id > 0:
+                    try:
+                        initial_api.fail(task_id)
+                    except WorkerError:
+                        pass  # Cancellation/expiry already retired the task.
+            return True
     if not claim:
         try:
             claim = api.claim_session_export()

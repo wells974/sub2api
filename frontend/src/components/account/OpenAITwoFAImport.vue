@@ -1,9 +1,9 @@
 <template>
   <div class="space-y-4">
     <CredentialEncryptionSetup @ready="encryptionReady = $event" />
-    <p class="input-hint">{{ t('tokenGuard.twoFA.hint') }}</p>
-    <a href="/admin/token-guard" target="_blank" rel="noopener noreferrer" class="text-primary-600">
-      {{ t('tokenGuard.twoFA.settings') }}
+    <p class="input-hint">{{ t(excelOauth ? 'admin.accounts.oauth.openai.excelAutoHint' : 'tokenGuard.twoFA.hint') }}</p>
+    <a :href="excelOauth ? '/admin/token-guard-v2' : '/admin/token-guard'" target="_blank" rel="noopener noreferrer" class="text-primary-600">
+      {{ t(excelOauth ? 'admin.accounts.oauth.openai.excelAutoSettings' : 'tokenGuard.twoFA.settings') }}
     </a>
     <template v-if="!rows.length">
       <label for="two-fa-credentials" class="input-label">{{ t('tokenGuard.twoFA.credentials') }}</label>
@@ -39,12 +39,18 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import CredentialEncryptionSetup from './CredentialEncryptionSetup.vue'
 import { useI18n } from 'vue-i18n'
-import { deleteTwoFALogin, getTwoFALogin, parseTwoFALoginText, startTwoFALogin } from '@/api/admin/accountTokenGuard'
+import { deleteTwoFALogin, getTwoFALogin, parseTwoFALoginText, startTwoFALogin, startExcelTwoFALogin, getExcelTwoFALogin, deleteExcelTwoFALogin } from '@/api/admin/accountTokenGuard'
 import type { TokenGuardReloginAccount } from '@/api/admin/accountTokenGuard'
 
 const props = defineProps<{
+  excelOauth?: boolean
+  proxyId?: number | null
   importCredential: (credential: Record<string, unknown>, email: string, login: TokenGuardReloginAccount, signal?: AbortSignal) => Promise<'created' | 'skipped'>
 }>()
+// Keep job ownership bound to the original queue during parent reset/unmount.
+const loginAPI = props.excelOauth
+  ? { start: (entry: TokenGuardReloginAccount) => startExcelTwoFALogin(entry, props.proxyId), get: getExcelTwoFALogin, delete: deleteExcelTwoFALogin }
+  : { start: startTwoFALogin, get: getTwoFALogin, delete: deleteTwoFALogin }
 const emit = defineEmits<{ busy: [value: boolean] }>()
 const { t } = useI18n()
 type Row = {
@@ -106,7 +112,7 @@ function discardJob(row: Row): Promise<void> {
   row.retiring = true
   // Keep both ownership and the shared cleanup promise until DELETE confirms
   // retirement. A failed DELETE fences this slot and identity across Retry.
-  row.cleanup = deleteTwoFALogin(id).then(() => {
+  row.cleanup = loginAPI.delete(id).then(() => {
     row.jobId = undefined
     row.retiring = false
   }).finally(() => { row.cleanup = undefined })
@@ -165,14 +171,14 @@ async function runRow(row: Row, signal: AbortSignal) {
       // Keep the job ID on polling failures; explicit retry resumes that job.
       // Do not abort this short POST: Axios could discard an accepted job ID.
       // Stop fences the worker until its response arrives and is retired.
-      if (!row.jobId) row.jobId = (await startTwoFALogin(row.entry)).id
+      if (!row.jobId) row.jobId = (await loginAPI.start(row.entry)).id
       signal.throwIfAborted()
-      let job = await getTwoFALogin(row.jobId, { signal })
+      let job = await loginAPI.get(row.jobId, { signal })
       signal.throwIfAborted()
       while (job.status === 'running') {
         await pollDelay(signal)
         signal.throwIfAborted()
-        job = await getTwoFALogin(row.jobId!, { signal })
+        job = await loginAPI.get(row.jobId!, { signal })
         signal.throwIfAborted()
       }
       if (job.status !== 'succeeded' || !job.credential) {

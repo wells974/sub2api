@@ -188,6 +188,9 @@ type OpenAIOAuthReauthAccountReader interface {
 }
 
 type OpenAIOAuthReauthService struct {
+	excelInitialMu          sync.Mutex
+	excelInitialJobs        map[int64]*excelInitialLogin
+	excelInitialWorkerSeen  atomic.Int64
 	settings                AccountTokenGuardV2Settings
 	worker                  *reauthruntime.Manager
 	workerToken             string

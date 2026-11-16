@@ -43,6 +43,18 @@ export async function deleteTwoFALogin(id: string): Promise<void> {
   await apiClient.delete(`${twoFALoginPath}/${id}`)
 }
 
+// BPS initial login uses the built-in Excel worker, independently of Session Studio.
+const excelInitialPath = '/admin/account-ops/initial-excel-login'
+export async function startExcelTwoFALogin(entry: TokenGuardReloginAccount, proxyId?: number | null): Promise<TwoFALoginJob> {
+  return (await apiClient.post(excelInitialPath, { ...entry, proxy_id: proxyId ?? null })).data
+}
+export async function getExcelTwoFALogin(id: string, options?: { signal?: AbortSignal }): Promise<TwoFALoginJob> {
+  return (await apiClient.get(`${excelInitialPath}/${id}`, options)).data
+}
+export async function deleteExcelTwoFALogin(id: string): Promise<void> {
+  await apiClient.delete(`${excelInitialPath}/${id}`)
+}
+
 export function parseTokenGuardReloginText(raw: string): TokenGuardReloginAccount[] {
   return raw
     .split(/\r?\n/)

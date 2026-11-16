@@ -576,6 +576,34 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     })
   })
 
+  it('creates an independent BPS account with automatic 2FA and does not enroll Codex re-login', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-testid="openai-bps-oauth"]').trigger('click')
+    await wrapper.get('[data-testid="bps-login-two-fa"]').setValue()
+    expect(wrapper.get('[data-tour="account-form-name"]').attributes('required')).toBeUndefined()
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    const importer = wrapper.getComponent(OpenAITwoFAImport)
+    expect(importer.props('excelOauth')).toBe(true)
+    expect(wrapper.findComponent(OAuthAuthorizationFlowStub).exists()).toBe(false)
+    const credential = { client_id: 'app_fnr0pYvVwwFDocDumLG3H2Bp', access_token: 'excel-at', refresh_token: 'excel-rt' }
+    const login = { email: 'bps@example.com', password: 'PRIVATE_PASSWORD', mfa_secret: 'PRIVATE_TOTP' }
+    await expect(importer.props('importCredential')(credential, login.email, login)).resolves.toBe('created')
+    const request = importCodexSessionMock.mock.calls[0]?.[0]
+    expect(request).toMatchObject({
+      content: JSON.stringify(credential), name: login.email, update_existing: false, skip_existing: true,
+      extra: { openai_excel_bps: true, openai_excel_bps_models: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra'] }
+    })
+    expect(request.initialize_openai_two_fa).toBeUndefined()
+    expect(JSON.stringify(request)).not.toContain('PRIVATE_')
+    expect(createCredentialOperationsMock).not.toHaveBeenCalled()
+    importCodexSessionMock.mockResolvedValueOnce({ created: 0, skipped: 1, failed: 0, items: [{ action: 'skipped', account_id: 42 }] })
+    await expect(importer.props('importCredential')(credential, login.email, login)).resolves.toBe('skipped')
+    await expect(importer.props('importCredential')({ ...credential, client_id: 'codex' }, login.email, login)).rejects.toThrow('invalid_excel_credentials')
+    expect(importCodexSessionMock).toHaveBeenCalledTimes(2)
+    expect(wrapper.emitted('created')).toHaveLength(1)
+  })
+
   it('retries operations enrollment for an already imported identity without reporting premature success', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
