@@ -26,9 +26,15 @@ export class TlsFingerprintTransport {
       if (mode==='security') throw new Error('PROXY_RISK_CONTROL PRIVATE_TOKEN');
       return new Response('',{status:302,headers:{location:'/log-in','set-cookie':'oai-did=synthetic-device; Path=/; Secure'}});
     }
-    if (route==='GET /log-in' || route==='GET /log-in/password') return new Response('<html>Offline</html>',{headers:{'content-type':'text/html'}});
+    if (route==='GET /login-transition') return new Response('',{status:302,headers:{location:'/log-in/password'}});
+    if (['GET /log-in','GET /log-in/password','GET /unknown-step','GET /email-verification','GET /add-phone','GET /consent'].includes(route)) return new Response('<html>Offline</html>',{headers:{'content-type':'text/html'}});
     if (route==='POST /api/accounts/authorize/continue') {
       assert.equal(JSON.parse(options.body).username.value,'test@example.test');
+      if (mode==='missing-step') return Response.json({page:{type:'unknown'}});
+      if (mode==='nested-relative') return Response.json({page:{payload:{url:'/log-in/password'}}});
+      const next = {relative:'/log-in/password',redirect:'/login-transition',unknown:'/unknown-step',
+        'foreign-origin':'https://untrusted.example/log-in/password',consent:'/consent',phone:'/add-phone'}[mode];
+      if (next) return Response.json({continue_url:next});
       return Response.json({continue_url:'https://auth.openai.com/'+(mode==='additional'?'email-verification':'log-in/password')});
     }
     if (route==='POST /api/accounts/password/verify') {

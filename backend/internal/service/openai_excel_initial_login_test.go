@@ -202,6 +202,10 @@ func TestExcelInitialLoginFailureDetailsAreSafeAndOwned(t *testing.T) {
 	for _, tc := range []struct{ code, stage, wantCode, wantStage string }{
 		{"transport_error", "protocol_connecting", "transport_error", "protocol_connecting"},
 		{"password_rejected", "web_login", "password_rejected", "web_login"},
+		{"email_verification", "web_login", "email_verification", "web_login"},
+		{"phone_verification", "web_login", "phone_verification", "web_login"},
+		{"interaction_required", "web_login", "interaction_required", "web_login"},
+		{"unexpected_login_step", "web_login", "unexpected_login_step", "web_login"},
 		{"PRIVATE_PASSWORD", "PRIVATE_TOKEN", "worker_failed", "starting"},
 		{"", "", "worker_failed", "starting"}, // Older workers remain compatible.
 	} {

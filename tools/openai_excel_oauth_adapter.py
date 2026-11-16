@@ -73,10 +73,11 @@ def excel_source(source):
       chatgpt_user_id: chatgptUserId,
       chatgpt_account_user_id: accessAuth.chatgpt_account_user_id || authClaims.chatgpt_account_user_id || "",
       chatgpt_account_id: chatgptAccountId,''')
-    # Fail on any interactive additional verification; never silently hang waiting for email/phone OTP.
+    # A request for interactive input is not necessarily an extra verification.
+    # Known email/phone pages are classified by the Excel flow itself.
     start = 'async function ask(rl, prompt) {'
     if start in source:
-        source = replace_exact(source, start, start+'\n  throw new Error("EXCEL_ADDITIONAL_VERIFICATION_REQUIRED");')
+        source = replace_exact(source, start, start+'\n  throw new Error("EXCEL_INTERACTION_REQUIRED");')
     source = replace_exact(source, '  const organization = workspaces.find((item) => item?.kind === "organization" && item?.id);', '''  const expected = process.env.OPENAI_EXCEL_EXPECTED_WORKSPACE;
   if (expected) {
     const matched = workspaces.find((item) => item?.id === expected);

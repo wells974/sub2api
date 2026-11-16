@@ -195,6 +195,7 @@ func (s *OpenAIOAuthReauthService) FailExcelInitialLogin(id int64, worker, code,
 	}
 	switch code {
 	case "runtime_error", "transport_error", "security_check", "additional_verification",
+		"email_verification", "phone_verification", "interaction_required", "unexpected_login_step",
 		"password_rejected", "totp_rejected", "callback_state_mismatch", "workspace_not_listed",
 		"client_id", "session_selection", "protocol_error", "timeout", "invalid_credentials", "worker_failed":
 	default:

@@ -112,8 +112,11 @@ class ExcelInitialLoginTests(unittest.TestCase):
             script = prepare(root, temporary)
             shutil.copyfile(Path(__file__).parent/'fixtures/excel-http-transport.mjs', script.with_name('tls-transport.mjs'))
             return script
-        for mode, code in [('success', None), ('password', 'password_rejected'), ('totp', 'totp_rejected'),
-                           ('additional', 'additional_verification'), ('transport', 'transport_error'),
+        for mode, code in [('success', None), ('relative', None), ('nested-relative', None), ('redirect', None),
+                           ('unknown', 'unexpected_login_step'), ('missing-step', 'unexpected_login_step'),
+                           ('foreign-origin', 'unexpected_login_step'), ('consent', 'interaction_required'),
+                           ('phone', 'phone_verification'), ('password', 'password_rejected'), ('totp', 'totp_rejected'),
+                           ('additional', 'email_verification'), ('transport', 'transport_error'),
                            ('security', 'security_check'), ('wrong-state', 'callback_state_mismatch')]:
             with self.subTest(mode=mode):
                 api = self.api()

@@ -467,8 +467,9 @@ func (s *OpenAIOAuthReauthService) missingExcelAuthorization(ctx context.Context
 		case "queued", "running", "callback_processing":
 			return infraerrors.ServiceUnavailable("OPENAI_EXCEL_AUTH_PENDING", "Excel authorization is in progress; see Credential Operations")
 		case "failed":
-			if strings.Contains(task.Error, "reason=security_check") || strings.Contains(task.Error, "reason=additional_verification") {
-				return infraerrors.ServiceUnavailable("OPENAI_EXCEL_AUTH_VERIFICATION_REQUIRED", "Automatic Excel login is blocked by a security check; see Credential Operations for status")
+			if strings.Contains(task.Error, "reason=security_check") || strings.Contains(task.Error, "reason=additional_verification") ||
+				strings.Contains(task.Error, "reason=email_verification") || strings.Contains(task.Error, "reason=phone_verification") {
+				return infraerrors.ServiceUnavailable("OPENAI_EXCEL_AUTH_VERIFICATION_REQUIRED", "Automatic Excel login requires verification or manual interaction; see Credential Operations for status")
 			}
 			return infraerrors.ServiceUnavailable("OPENAI_EXCEL_AUTH_FAILED", "Automatic Excel authorization failed and will retry after cooldown; see Credential Operations for status")
 		}

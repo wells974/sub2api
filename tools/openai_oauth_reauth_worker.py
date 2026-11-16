@@ -1291,6 +1291,7 @@ def _siwc_password_failure(output: str, exit_code: int) -> str:
 
 EXCEL_FAILURE_CODES = {
     'runtime_error', 'transport_error', 'security_check', 'additional_verification',
+    'email_verification', 'phone_verification', 'interaction_required', 'unexpected_login_step',
     'password_rejected', 'totp_rejected', 'callback_state_mismatch', 'workspace_not_listed',
     'client_id', 'session_selection', 'protocol_error', 'timeout', 'invalid_credentials', 'worker_failed',
 }
@@ -1314,7 +1315,8 @@ def initial_excel_failure(exc, stage):
         reasons = set(match[2].split(','))
         # A rejected password/TOTP may also trigger the no-interactive-input guard.
         for code in ('password_rejected', 'totp_rejected', 'runtime_error', 'transport_error',
-                     'security_check', 'additional_verification', 'callback_state_mismatch',
+                     'security_check', 'email_verification', 'phone_verification', 'interaction_required',
+                     'unexpected_login_step', 'additional_verification', 'callback_state_mismatch',
                      'workspace_not_listed', 'client_id', 'session_selection', 'protocol_error'):
             if code in reasons:
                 return code, stage
@@ -1570,6 +1572,10 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
                         stage = label
                 reasons = [label for marker, label in (("security-check", "security_check"), ("PROXY_RISK_CONTROL", "security_check"),
                            ("EXCEL_ADDITIONAL_VERIFICATION_REQUIRED", "additional_verification"),
+                           ("EXCEL_EMAIL_VERIFICATION_REQUIRED", "email_verification"),
+                           ("EXCEL_PHONE_VERIFICATION_REQUIRED", "phone_verification"),
+                           ("EXCEL_INTERACTION_REQUIRED", "interaction_required"),
+                           ("EXCEL_UNEXPECTED_LOGIN_STEP", "unexpected_login_step"),
                            ("EXCEL_CALLBACK_STATE_MISMATCH", "callback_state_mismatch"),
                            ("EXCEL_EXPECTED_WORKSPACE_NOT_LISTED", "workspace_not_listed"),
                            ("Password was rejected", "password_rejected"), ("2FA key was rejected", "totp_rejected"),

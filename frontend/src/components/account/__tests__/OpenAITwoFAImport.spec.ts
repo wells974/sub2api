@@ -190,6 +190,10 @@ it.each([
   ['password_rejected', 'web_login', 'tokenGuard.twoFA.excelFailures.password_rejected'],
   ['totp_rejected', 'mfa_challenge', 'tokenGuard.twoFA.excelFailures.totp_rejected'],
   ['runtime_error', 'starting', 'tokenGuard.twoFA.excelFailures.runtime_error'],
+  ['email_verification', 'web_login', 'tokenGuard.twoFA.excelFailures.email_verification'],
+  ['phone_verification', 'web_login', 'tokenGuard.twoFA.excelFailures.phone_verification'],
+  ['interaction_required', 'web_login', 'tokenGuard.twoFA.excelFailures.interaction_required'],
+  ['unexpected_login_step', 'web_login', 'tokenGuard.twoFA.excelFailures.unexpected_login_step'],
   ['PRIVATE_TOKEN', 'PRIVATE_PASSWORD', 'tokenGuard.twoFA.states.failed'],
   [undefined, undefined, 'tokenGuard.twoFA.states.failed'],
 ])('shows failed BPS job diagnostics safely (%s)', async (errorCode, errorStage, key) => {
