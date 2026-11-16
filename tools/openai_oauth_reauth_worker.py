@@ -1301,6 +1301,25 @@ EXCEL_FAILURE_STAGES = {
 }
 
 
+def parse_excel_failure(message):
+    """Validate the complete diagnostic before retaining any of its fields."""
+    match = re.fullmatch(r'Excel password/TOTP login failed \(stage=([a-z_]+), reason=([a-z_,]+), exit=(-?\d{1,3})\)',
+                         message if len(message) <= 256 else '')
+    if not match:
+        return None
+    stage, reasons, exit_code = match.groups()
+    reasons = set(reasons.split(','))
+    if stage not in EXCEL_FAILURE_STAGES or not reasons <= EXCEL_FAILURE_CODES or not -255 <= int(exit_code) <= 255:
+        return None
+    # Password/TOTP rejection can also invoke the no-interactive-input guard.
+    priority = ('password_rejected', 'totp_rejected', 'runtime_error', 'transport_error',
+                'security_check', 'email_verification', 'phone_verification', 'interaction_required',
+                'unexpected_login_step', 'additional_verification', 'callback_state_mismatch',
+                'workspace_not_listed', 'client_id', 'session_selection', 'protocol_error',
+                'timeout', 'invalid_credentials', 'worker_failed')
+    return stage, next(code for code in priority if code in reasons), int(exit_code)
+
+
 def initial_excel_failure(exc, stage):
     """Return bounded identifiers only; never send exception text to the API."""
     stage = stage if stage in EXCEL_FAILURE_STAGES else 'starting'
@@ -1309,17 +1328,10 @@ def initial_excel_failure(exc, stage):
     if not isinstance(exc, WorkerError):
         return 'worker_failed', stage
     message = str(exc)
-    match = re.fullmatch(r'Excel password/TOTP login failed \(stage=([a-z_]+), reason=([a-z_,]+), exit=-?\d+\)', message)
-    if match:
-        stage = match[1] if match[1] in EXCEL_FAILURE_STAGES else stage
-        reasons = set(match[2].split(','))
-        # A rejected password/TOTP may also trigger the no-interactive-input guard.
-        for code in ('password_rejected', 'totp_rejected', 'runtime_error', 'transport_error',
-                     'security_check', 'email_verification', 'phone_verification', 'interaction_required',
-                     'unexpected_login_step', 'additional_verification', 'callback_state_mismatch',
-                     'workspace_not_listed', 'client_id', 'session_selection', 'protocol_error'):
-            if code in reasons:
-                return code, stage
+    parsed = parse_excel_failure(message)
+    if parsed:
+        stage, code, _ = parsed
+        return code, stage
     if message == 'password/TOTP protocol timed out':
         return 'timeout', stage
     if message in {'unsupported_toSub2_runtime_layout', 'password/TOTP protocol could not start',
@@ -1575,6 +1587,7 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
                            ("EXCEL_EMAIL_VERIFICATION_REQUIRED", "email_verification"),
                            ("EXCEL_PHONE_VERIFICATION_REQUIRED", "phone_verification"),
                            ("EXCEL_INTERACTION_REQUIRED", "interaction_required"),
+                           ("2FA is required, but the response does not contain a TOTP factor ID", "interaction_required"),
                            ("EXCEL_UNEXPECTED_LOGIN_STEP", "unexpected_login_step"),
                            ("EXCEL_CALLBACK_STATE_MISMATCH", "callback_state_mismatch"),
                            ("EXCEL_EXPECTED_WORKSPACE_NOT_LISTED", "workspace_not_listed"),
@@ -1821,6 +1834,12 @@ def safe_worker_failure(exc: BaseException) -> str:
     if isinstance(exc, SessionStudioError):
         return exc.diagnostic()
     raw = str(exc).strip()
+    if isinstance(exc, WorkerError) and raw.startswith('Excel password/TOTP login failed'):
+        parsed = parse_excel_failure(raw)
+        if parsed:
+            stage, reason, exit_code = parsed
+            return f'Excel password/TOTP login failed (stage={stage}, reason={reason}, exit={exit_code})'
+        return 'worker_failed'
     if raw.startswith("session_studio_failed"):
         return sanitize_error(raw)  # Whole-protocol validator; never generic prose.
     if raw.startswith("local_protocol_failed"):

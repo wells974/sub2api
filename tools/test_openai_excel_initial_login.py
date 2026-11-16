@@ -105,6 +105,20 @@ class ExcelInitialLoginTests(unittest.TestCase):
         self.assertEqual(worker.initial_excel_failure(worker.WorkerError('password/TOTP protocol timed out'),
                                                     'protocol_connecting'), ('timeout', 'protocol_connecting'))
 
+    def test_persisted_excel_relogin_retains_only_validated_failure_details(self):
+        api = self.api()
+        api.claim = Mock(return_value={'task_id': 7, 'account_id': 42, 'oauth_profile': 'excel'})
+        api.fail = Mock()
+        raw = 'Excel password/TOTP login failed (stage=mfa_challenge, reason=interaction_required,totp_rejected, exit=1)'
+        expected = 'Excel password/TOTP login failed (stage=mfa_challenge, reason=totp_rejected, exit=1)'
+        with patch.object(worker, 'process_claim', side_effect=worker.WorkerError(raw)), self.assertLogs(worker.LOGGER):
+            self.assertTrue(worker.run_once(api, None))
+        api.fail.assert_called_once_with(7, expected)
+        for invalid in (raw+' PRIVATE_TOKEN', raw.replace('mfa_challenge', 'private_stage'),
+                        raw.replace('totp_rejected', 'private_reason'), raw.replace('exit=1', 'exit=999')):
+            self.assertEqual(worker.safe_worker_failure(worker.WorkerError(invalid)), 'worker_failed')
+            self.assertEqual(worker.initial_excel_failure(worker.WorkerError(invalid), 'starting'), ('worker_failed', 'starting'))
+
     @unittest.skipUnless(os.getenv('EXCEL_TEST_TOSUB2_ROOT'), 'set EXCEL_TEST_TOSUB2_ROOT to the pinned dependency')
     def test_real_cli_reports_initial_login_results_without_mocking_login_helpers(self):
         prepare = adapter.prepare_excel_runtime
@@ -113,6 +127,13 @@ class ExcelInitialLoginTests(unittest.TestCase):
             shutil.copyfile(Path(__file__).parent/'fixtures/excel-http-transport.mjs', script.with_name('tls-transport.mjs'))
             return script
         for mode, code in [('success', None), ('relative', None), ('nested-relative', None), ('redirect', None),
+                           ('totp-window', None), ('user-id-alias', None), ('direct-password', None), ('no-mfa', None), ('no-workspace', None),
+                           ('mfa-relative', None), ('workspace-relative', None), ('final-relative', None),
+                           ('foreign-redirect', 'unexpected_login_step'), ('post-password-foreign', 'unexpected_login_step'),
+                           ('email-metadata', 'email_verification'), ('email-before-password-metadata', 'email_verification'),
+                           ('non-totp-factor', 'interaction_required'),
+                           ('duplicate-state', 'callback_state_mismatch'), ('duplicate-code', 'callback_state_mismatch'),
+                           ('callback-error', 'callback_state_mismatch'), ('callback-fragment', 'callback_state_mismatch'),
                            ('unknown', 'unexpected_login_step'), ('missing-step', 'unexpected_login_step'),
                            ('foreign-origin', 'unexpected_login_step'), ('consent', 'interaction_required'),
                            ('phone', 'phone_verification'), ('password', 'password_rejected'), ('totp', 'totp_rejected'),

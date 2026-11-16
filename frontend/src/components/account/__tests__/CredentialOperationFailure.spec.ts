@@ -8,7 +8,8 @@ import { safeOperationFailure, safeDiagnosticToken } from '@/utils/credentialOpe
 
 describe('credential operation failure display', () => {
   it('preserves fixed identity validation reasons and drops arbitrary identity text', () => {
-    for (const reason of ['account_id_missing', 'account_id_mismatch', 'user_id_missing', 'email_missing', 'token_account_conflict', 'id_token_invalid']) {
+    for (const reason of ['account_id_missing', 'account_id_mismatch', 'user_id_missing', 'email_missing', 'token_account_conflict', 'id_token_invalid', 'email_verification', 'phone_verification', 'unexpected_login_step',
+      'excel_authorize', 'excel_token_exchange', 'protocol_connecting', 'applying_credentials']) {
       expect(safeDiagnosticToken(reason)).toBe(reason)
     }
     for (const text of ['user@example.test', 'account_id_mismatch user@example.test', 'token private', 'workspace-actual-id']) {

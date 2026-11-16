@@ -1278,7 +1278,10 @@ func safeReauthTask(record *OpenAIOAuthReauthTaskRecord) *OpenAIOAuthReauthTask 
 	if record == nil {
 		return nil
 	}
-	_, diagnostic, _ := localProtocolError(record.Error)
+	_, diagnostic, _ := excelProtocolError(record.Error)
+	if diagnostic == nil {
+		_, diagnostic, _ = localProtocolError(record.Error)
+	}
 	if diagnostic == nil {
 		_, diagnostic, _ = sessionStudioError(record.Error)
 	}
@@ -1295,6 +1298,9 @@ func safeReauthTask(record *OpenAIOAuthReauthTaskRecord) *OpenAIOAuthReauthTask 
 }
 
 func sanitizeReauthError(raw string) string {
+	if safe, _, handled := excelProtocolError(raw); handled {
+		return safe
+	}
 	if safe, _, handled := parseReauthIdentityError(raw); handled {
 		return safe
 	}

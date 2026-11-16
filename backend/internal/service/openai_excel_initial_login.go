@@ -193,20 +193,32 @@ func (s *OpenAIOAuthReauthService) FailExcelInitialLogin(id int64, worker, code,
 	if job == nil || !time.Now().Before(job.expiresAt) || job.status != "running" || worker == "" || job.worker != worker {
 		return infraerrors.New(http.StatusConflict, "EXCEL_LOGIN_NOT_ACTIVE", "Login task is no longer active")
 	}
+	if !validExcelLoginFailureCode(code) {
+		code = "worker_failed"
+	}
+	if !validExcelLoginFailureStage(stage) {
+		stage = "starting"
+	}
+	job.status, job.errorCode, job.errorStage = "failed", code, stage
+	return nil
+}
+
+func validExcelLoginFailureCode(code string) bool {
 	switch code {
 	case "runtime_error", "transport_error", "security_check", "additional_verification",
 		"email_verification", "phone_verification", "interaction_required", "unexpected_login_step",
 		"password_rejected", "totp_rejected", "callback_state_mismatch", "workspace_not_listed",
 		"client_id", "session_selection", "protocol_error", "timeout", "invalid_credentials", "worker_failed":
-	default:
-		code = "worker_failed"
+		return true
 	}
+	return false
+}
+
+func validExcelLoginFailureStage(stage string) bool {
 	switch stage {
 	case "starting", "protocol_connecting", "web_login", "password_accepted", "mfa_challenge",
 		"mfa_accepted", "excel_authorize", "excel_token_exchange", "applying_credentials":
-	default:
-		stage = "starting"
+		return true
 	}
-	job.status, job.errorCode, job.errorStage = "failed", code, stage
-	return nil
+	return false
 }
