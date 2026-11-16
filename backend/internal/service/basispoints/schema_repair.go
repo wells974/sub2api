@@ -24,8 +24,13 @@ type schemaRepairFeedback struct{ Issues []schemaRepairIssue }
 // Preserve progressive counters for schema correction when a failed terminal
 // omits them or reports zeros. Existing transport reader semantics stay intact.
 func ReadClientToolRepairResponse(reader io.Reader, validation error) (map[string]any, error) {
+	return ReadClientToolRepairResponseWithContext(context.Background(), reader, validation)
+}
+
+// ReadClientToolRepairResponseWithContext also observes private upstream failures.
+func ReadClientToolRepairResponseWithContext(ctx context.Context, reader io.Reader, validation error) (map[string]any, error) {
 	_, schema := validation.(*schemaRepairFeedback)
-	return readToolRepairResponse(reader, schema)
+	return readToolRepairResponse(ctx, reader, schema)
 }
 
 func (*schemaRepairFeedback) Error() string {

@@ -21,7 +21,8 @@ func (f *UpstreamFailure) Details() map[string]any {
 }
 
 // ParseUpstreamFailure recognizes failure terminals only. Unknown identifiers
-// and free-form upstream messages never enter client responses or diagnostics.
+// and free-form messages stay out of this public failure representation.
+// The separate rate-limit observer supplies private metadata for redacted logs.
 func ParseUpstreamFailure(raw []byte) *UpstreamFailure {
 	if ParseBridgeFailure(raw) != nil {
 		return nil

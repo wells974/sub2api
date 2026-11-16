@@ -163,6 +163,10 @@ func RepairRequest(prepared []byte) ([]byte, error) {
 }
 
 func readRepairResponse(reader io.Reader) (object, error) {
+	return readRepairResponseWithContext(context.Background(), reader)
+}
+
+func readRepairResponseWithContext(ctx context.Context, reader io.Reader) (object, error) {
 	var response object
 	var observedUsage object
 	pending := make(map[string]bool)
@@ -191,6 +195,7 @@ func readRepairResponse(reader io.Reader) (object, error) {
 		if kind == "" {
 			kind = eventName
 		}
+		observeRateLimit(ctx, "unknown_tool_repair", kind, event)
 		if kind == "response.output_item.done" {
 			item, _ := event["item"].(object)
 			if isTool(item) {
@@ -275,7 +280,7 @@ func (b *Bridge) repairResponse(ctx context.Context, original object, repair Rep
 		return nil, -1, err
 	}
 	defer func() { _ = reader.Close() }()
-	corrected, err := readRepairResponse(reader)
+	corrected, err := readRepairResponseWithContext(ctx, reader)
 	first, _ := original["usage"].(object)
 	second, _ := corrected["usage"].(object)
 	original["usage"] = mergeUsage(first, second)

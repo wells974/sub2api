@@ -534,6 +534,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			return fail(400, "basispoints_request_invalid", err.Error())
 		}
 	}
+	ctx = withExcelBPSRateLimitDiagnostics(ctx, account, token, model)
 	requestCtx := WithHTTPUpstreamRedirectsDisabled(WithHTTPUpstreamProfile(ctx, HTTPUpstreamProfileExcelBPS))
 
 	latency.Advance("auto_compact")
@@ -575,7 +576,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		s.UpdateCodexUsageSnapshotFromHeaders(ctx, account.ID, cr.Header)
 		compactEffort = bridge.Effort
-		compactResponse, compactErr := basispoints.ReadImageCompaction(cr.Body, func(payload []byte) { s.parseSSEUsageBytes(payload, &compactUsage) })
+		compactResponse, compactErr := basispoints.ReadImageCompactionWithContext(requestCtx, cr.Body, func(payload []byte) { s.parseSSEUsageBytes(payload, &compactUsage) })
 		_ = cr.Body.Close()
 		if compactResponse != nil {
 			encoded, _ := json.Marshal(map[string]any{"type": "response.completed", "response": compactResponse})
@@ -839,7 +840,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			}
 			s.UpdateCodexUsageSnapshotFromHeaders(repairCtx, account.ID, repairResp.Header)
 			upstreamBody = correctedBody
-			return basispoints.ReadClientToolRepairResponse(repairResp.Body, validation)
+			return basispoints.ReadClientToolRepairResponseWithContext(repairCtx, repairResp.Body, validation)
 		}, func(repairCtx context.Context) (io.ReadCloser, error) {
 			markPriorityAttemptFailure(repairCtx)
 			repairBody, err := basispoints.RepairRequest(upstreamBody)

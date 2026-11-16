@@ -381,10 +381,10 @@ func BuildToolRepairRequest(prepared []byte, failed map[string]any, validation e
 // ReadToolRepairResponse withholds all intermediate events from the client.
 // Only the terminal native response is authoritative, as in the primary stream.
 func ReadToolRepairResponse(reader io.Reader) (map[string]any, error) {
-	return readToolRepairResponse(reader, false)
+	return readToolRepairResponse(context.Background(), reader, false)
 }
 
-func readToolRepairResponse(reader io.Reader, preserveObservedUsage bool) (map[string]any, error) {
+func readToolRepairResponse(ctx context.Context, reader io.Reader, preserveObservedUsage bool) (map[string]any, error) {
 	var response object
 	var observedUsage object
 	var terminalError error
@@ -409,6 +409,7 @@ func readToolRepairResponse(reader io.Reader, preserveObservedUsage bool) (map[s
 		if kind == "" {
 			kind = event
 		}
+		observeRateLimit(ctx, "tool_repair", kind, payload)
 		item, _ := payload["item"].(object)
 		if kind == "response.output_item.done" && isTool(item) {
 			if len(pending) >= 1024 {

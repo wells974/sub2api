@@ -93,7 +93,7 @@ func (b *Bridge) searchRounds(ctx context.Context, upstream io.ReadCloser, wire 
 		observed := newSearchTextObserver(state, offset, bufferText)
 		roundBody := current
 		stop := context.AfterFunc(ctx, func() { _ = roundBody.Close() })
-		response, err := readSearchRound(current, observed.observe)
+		response, err := readSearchRound(ctx, current, observed.observe)
 		stop()
 		_ = current.Close()
 		current = nil
@@ -293,7 +293,7 @@ func (b *searchRoundBody) Close() error {
 	return b.err
 }
 
-func readSearchRound(reader io.Reader, observe func(string, object) error) (object, error) {
+func readSearchRound(ctx context.Context, reader io.Reader, observe func(string, object) error) (object, error) {
 	var response, usage object
 	var terminalErr error
 	terminal := false
@@ -309,6 +309,7 @@ func readSearchRound(reader io.Reader, observe func(string, object) error) (obje
 		if kind == "" {
 			kind = event
 		}
+		observeRateLimit(ctx, "search", kind, payload)
 		if current, ok := payload["response"].(object); ok {
 			if value, ok := current["usage"].(object); ok {
 				usage = maxReportedUsage(usage, value)

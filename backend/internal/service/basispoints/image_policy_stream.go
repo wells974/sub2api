@@ -145,6 +145,11 @@ func mergeImageUsage(dst, src object) {
 // ReadImageCompaction observes reported usage even when no successful terminal
 // arrives. The caller never sees intermediate text or executable tool events.
 func ReadImageCompaction(reader io.Reader, observe func([]byte)) (map[string]any, error) {
+	return ReadImageCompactionWithContext(context.Background(), reader, observe)
+}
+
+// ReadImageCompactionWithContext also observes private upstream failures.
+func ReadImageCompactionWithContext(ctx context.Context, reader io.Reader, observe func([]byte)) (map[string]any, error) {
 	var response object
 	completed := false
 	progressiveUsage := object{}
@@ -169,6 +174,7 @@ func ReadImageCompaction(reader io.Reader, observe func([]byte)) (map[string]any
 		if kind == "" {
 			kind = event
 		}
+		observeRateLimit(ctx, "image_compaction", kind, p)
 		item, _ := p["item"].(object)
 		if isTool(item) || isToolEvent(kind) {
 			return fmt.Errorf("image compaction returned an unexpected tool event")

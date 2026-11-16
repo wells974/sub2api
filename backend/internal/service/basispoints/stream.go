@@ -152,6 +152,7 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 			kind = event
 		}
 		observeUpstreamLatency(ctx, kind, data)
+		observeRateLimit(ctx, "generation", kind, payload)
 		if b.structured != nil && kind == "response.completed" {
 			if response, ok := payload["response"].(object); !ok || response == nil {
 				return fmt.Errorf("basispoints structured output is missing its terminal response")
