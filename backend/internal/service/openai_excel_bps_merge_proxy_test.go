@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -69,6 +70,8 @@ func TestExcelBPSRequestProxyDirectSearchCatalogKeepsExit(t *testing.T) {
 			require.NoError(t, err)
 			_ = search.Body.Close()
 			disclosure := excelBPSRepairWire(t, "disclosure", "Run", `{"name":"optional_00","arguments":{"count":1}}`)
+			invalid := excelBPSRepairWire(t, "invalid", "Run", `{"name":"optional_00","arguments":{"count":"PRIVATE_INVALID"}}`)
+			repaired := excelBPSRepairWire(t, "repaired", "Run", `{"name":"optional_00","arguments":{"count":2}}`)
 			svc, account := localBPSRequestProxyFixture(t, 3, func(id int, w http.ResponseWriter, r *http.Request) {
 				raw, _ := io.ReadAll(r.Body)
 				observed <- requestProxyObservation{id: id, path: r.URL.Path, body: raw}
@@ -78,14 +81,23 @@ func TestExcelBPSRequestProxyDirectSearchCatalogKeepsExit(t *testing.T) {
 					_, _ = w.Write(searchWire)
 				case 2:
 					_, _ = io.WriteString(w, `{"output":"found","results":[{"url":"https://example.test","title":"Fixture"}]}`)
-				default:
+				case 3:
 					w.Header().Set("Content-Type", "text/event-stream")
 					_, _ = io.WriteString(w, disclosure)
+				case 4:
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, invalid)
+				case 5:
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, repaired)
+				default:
+					w.WriteHeader(http.StatusInternalServerError)
 				}
 			})
 			account.Extra[ExcelBPSWebSearchKey] = true
 			account.Extra[ExcelBPSWebSearchAutoKey] = true
-			body, err := json.Marshal(onDemandGatewaySource(stream))
+			source := onDemandGatewaySource(stream)
+			body, err := json.Marshal(source)
 			require.NoError(t, err)
 			code, response, err := forwardLocalBPSRequest(t.Context(), svc, account, body)
 			require.NoError(t, err, response)
@@ -106,6 +118,43 @@ func TestExcelBPSRequestProxyDirectSearchCatalogKeepsExit(t *testing.T) {
 			}
 			require.True(t, nativeSearchFound)
 			require.EqualValues(t, 3, calls.Load(), "search must not enter Schema repair")
+			require.Empty(t, observed)
+
+			// Replay the completed search and literal documentation through the
+			// client boundary. Once search is disabled, the disclosed tool must
+			// regain ordinary Schema correction without leaking the private tool.
+			docsCall := terminal.Get("output.1")
+			printCode := gjson.Get(docsCall.Get("arguments").String(), "code").String()
+			require.True(t, strings.HasPrefix(printCode, "nodeRepl.write("))
+			var docs string
+			require.NoError(t, json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(printCode, "nodeRepl.write("), ");")), &docs))
+			history := []any{map[string]any{"role": "user", "content": "search then use the optional tool"}}
+			for _, item := range terminal.Get("output").Array() {
+				var value map[string]any
+				require.NoError(t, json.Unmarshal([]byte(item.Raw), &value))
+				history = append(history, value)
+			}
+			source["input"] = append(history, map[string]any{"type": "function_call_output", "call_id": docsCall.Get("call_id").String(), "output": docs})
+			account.Extra[ExcelBPSWebSearchKey] = false
+			account.Extra[ExcelBPSWebSearchAutoKey] = false
+			body, err = json.Marshal(source)
+			require.NoError(t, err)
+			code, response, err = forwardLocalBPSRequest(t.Context(), svc, account, body)
+			require.NoError(t, err, response)
+			require.Equal(t, 200, code)
+			terminal = catalogGatewayTerminal(t, response, stream)
+			require.Len(t, terminal.Get("output").Array(), 1)
+			require.Equal(t, "optional_00", terminal.Get("output.0.name").String())
+			require.JSONEq(t, `{"count":2}`, terminal.Get("output.0.arguments").String())
+			require.NotContains(t, response, "PRIVATE_INVALID")
+			require.EqualValues(t, 20, terminal.Get("usage.input_tokens").Int())
+			require.EqualValues(t, 4, terminal.Get("usage.output_tokens").Int())
+			require.EqualValues(t, 5, calls.Load(), "one correction after disclosure, no search replay")
+			generation, correction := <-observed, <-observed
+			require.Equal(t, generation.id, correction.id)
+			require.Contains(t, string(correction.body), "invalid_client_tool_arguments")
+			require.NotContains(t, string(generation.body), "__sub2api_web_search")
+			require.NotContains(t, string(correction.body), "__sub2api_web_search")
 			require.Empty(t, observed)
 		})
 	}
