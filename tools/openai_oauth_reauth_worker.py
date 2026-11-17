@@ -446,16 +446,17 @@ class WorkerAPI:
             raise WorkerError("invalid worker concurrency from server")
         return value
 
-    def totp_phase(self, task_id, phase, secret=""):
+    def totp_phase(self, task_id, phase, secret="", factor_id="", enrollment_session_id=""):
         return self._post(f"/api/v1/internal/openai-reauth/{task_id}/totp-phase",
-                          {"worker_id": self.config.worker_id, "phase": phase, "secret": secret})
+                          {"worker_id": self.config.worker_id, "phase": phase, "secret": secret,
+                           "factor_id": factor_id, "enrollment_session_id": enrollment_session_id})
 
     def totp_finish(self, task_id, success, error_code=""):
         return self._post(f"/api/v1/internal/openai-reauth/{task_id}/totp-finish",
                           {"worker_id": self.config.worker_id, "success": success, "error_code": error_code})
 
-    def totp_recover(self, task_id, secret):
-        return self._post(f"/api/v1/internal/openai-reauth/{task_id}/totp-recover", {"secret": secret})
+    def totp_recover(self, task_id, secret, factor_id="", enrollment_session_id=""):
+        return self._post(f"/api/v1/internal/openai-reauth/{task_id}/totp-recover", {"secret": secret, "factor_id": factor_id, "enrollment_session_id": enrollment_session_id})
 
     def claim_totp(self):
         if self.config.tosub2_root is None or not os.getenv("OPENAI_TOTP_JOURNAL_DIR"):
@@ -1446,6 +1447,8 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
     if not script.is_file():
         raise WorkerError("toSub2 protocol-login.mjs is unavailable")
 
+    if claim.get("totp_factor_id") and "TOTP_FACTOR_BINDING_REQUIRED" not in script.read_text():
+        raise WorkerError("factor_binding_runtime_required")
     LOGGER.info("task=%s account=%s started (password protocol)", task_id, account_id)
     _best_effort_progress(api, task_id, "starting")
     _best_effort_progress(api, task_id, "protocol_connecting")
@@ -1531,6 +1534,7 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
             for key in ("CHATGPT_BASE", "AUTH_BASE", "CHATGPT_PROXY_URL"):
                 child_env.pop(key, None)
             child_env["CHATGPT_PROXY_MAX_ATTEMPTS"] = "1"
+        child_env["CHATGPT_TOTP_FACTOR_ID"] = str(claim.get("totp_factor_id") or "")
         child_env["CHATGPT_LOGIN_PASSWORD"] = password
         if totp_secret:
             child_env["CHATGPT_TOTP_SECRET"] = totp_secret
@@ -1587,6 +1591,9 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
                            ("EXCEL_EMAIL_VERIFICATION_REQUIRED", "email_verification"),
                            ("EXCEL_PHONE_VERIFICATION_REQUIRED", "phone_verification"),
                            ("EXCEL_INTERACTION_REQUIRED", "interaction_required"),
+                           ("TOTP_FACTOR_NOT_FOUND", "interaction_required"),
+                           ("TOTP_FACTOR_BINDING_REQUIRED", "interaction_required"),
+                           ("TOTP_SECRET_REQUIRED", "interaction_required"),
                            ("2FA is required, but the response does not contain a TOTP factor ID", "interaction_required"),
                            ("EXCEL_UNEXPECTED_LOGIN_STEP", "unexpected_login_step"),
                            ("EXCEL_CALLBACK_STATE_MISMATCH", "callback_state_mismatch"),
@@ -1682,6 +1689,7 @@ def process_session_export_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
         login_claim = {
             "login_email": email,
             "password": password,
+            "totp_factor_id": str(claim.get("totp_factor_id") or ""),
             "proxy_url": str(claim.get("proxy_url") or ""),
         }
         _best_effort_session_progress(api, task_id, "password_submitted")

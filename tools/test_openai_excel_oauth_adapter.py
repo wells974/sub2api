@@ -70,7 +70,7 @@ class ExcelAdapterTests(unittest.TestCase):
             with patch.object(adapter,'excel_source',return_value='excel'):
                 staged=adapter.prepare_excel_runtime(root,output)
             self.assertEqual(staged.read_text(),'excel');self.assertEqual(script.read_text(),'original')
-            self.assertEqual((staged.parent.parent/'node_modules').resolve(),root/'node_modules')
+            self.assertEqual((staged.parent.parent/'node_modules').resolve(),(root/'node_modules').resolve())
 
     def test_contract_change_never_silently_partially_patches(self):
         with self.assertRaises(ValueError):adapter.replace_exact('old old','old','new')

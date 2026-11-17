@@ -41,6 +41,7 @@ type Bridge struct {
 	clientStream         bool
 	toolChoice           string
 	selectedTool         *tool
+	searchDiagnostics    bool
 }
 
 func decode(raw []byte, target any) error {

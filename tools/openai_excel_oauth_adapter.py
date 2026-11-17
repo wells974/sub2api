@@ -36,9 +36,19 @@ def excel_source(source):
     source = replace_exact(source, 'async function runCodexOauth(client, options) {', '''async function runCodexOauth(client, options) {
   if (client.excelOAuth) return client.excelOAuth;
   throw new Error("EXCEL_PKCE_SESSION_MISSING");''')
-    source = replace_exact(source,
-        '      const { data } = await authJsonStep(client, authBase, "POST", "/api/accounts/mfa/verify", {',
-        '''      // Header preparation can cross a TOTP window. Generate immediately before sending.
+    # Accept both the pinned legacy runtime and its factor-binding patch. Keep
+    # factor selection intact, but generate the OTP after asynchronous headers.
+    factor_code = '    const code = generateTotp(totpSecret);\n    const sentinelHeaders = await createSentinelHeaders(client, {authBase, deviceId, flow: "password_verify"});'
+    if factor_code in source:
+        source = replace_exact(source, factor_code,
+            '    const sentinelHeaders = await createSentinelHeaders(client, {authBase, deviceId, flow: "password_verify"});\n    const code = generateTotp(totpSecret);')
+    else:
+        # Verify the legacy contract as well as the shared request anchor.
+        if source.count('  let generatedFromSecret = false;') != 1:
+            raise ValueError("unsupported_toSub2_runtime_layout")
+        source = replace_exact(source,
+            '      const { data } = await authJsonStep(client, authBase, "POST", "/api/accounts/mfa/verify", {',
+            '''      // Header preparation can cross a TOTP window. Generate immediately before sending.
       if (generatedFromSecret) code = generateTotp(totpSecret);
       const { data } = await authJsonStep(client, authBase, "POST", "/api/accounts/mfa/verify", {''')
     source = replace_exact(source, 'const DEFAULT_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";',

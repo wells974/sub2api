@@ -116,9 +116,10 @@ func TestTrafficCalendarBucketsCrossSkippedDaysAndMidnights(t *testing.T) {
 func TestTrafficCalendarUsesFirstMidnightWhenRepeated(t *testing.T) {
 	loc, err := time.LoadLocation("America/Havana")
 	require.NoError(t, err)
-	f, err := newTrafficFilter("day", "2026-11-01", time.Now(), loc)
+	// Use a historical fold; future DST rules can change with host tzdata.
+	f, err := newTrafficFilter("day", "2020-11-01", time.Now(), loc)
 	require.NoError(t, err)
-	require.Equal(t, "2026-11-01T00:00:00-04:00", f.Start.Format(time.RFC3339))
+	require.Equal(t, "2020-11-01T00:00:00-04:00", f.Start.Format(time.RFC3339))
 	require.Equal(t, 25*time.Hour, f.End.Sub(f.Start))
 	require.Len(t, TrafficBuckets(f), 25)
 }

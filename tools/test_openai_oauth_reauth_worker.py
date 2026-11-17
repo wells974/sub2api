@@ -113,7 +113,7 @@ class OpenAIOAuthReauthWorkerTest(unittest.TestCase):
             with patch.dict(os.environ, env, clear=True):
                 config = WorkerConfig.from_env()
                 self.assertIsNone(config.protocol_root)
-                self.assertEqual(config.tosub2_root, Path(root))
+                self.assertEqual(config.tosub2_root, Path(root).resolve())
 
     def test_rejects_missing_login_runtimes(self):
         with patch.dict(os.environ, {"OPENAI_REAUTH_WORKER_TOKEN": "x" * 32}, clear=True):

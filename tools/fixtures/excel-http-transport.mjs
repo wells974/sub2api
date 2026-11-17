@@ -1,7 +1,7 @@
 // Exercise the pinned CLI and its real login helpers without any network access.
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-let fixtureTime = 1800000029999, mfaIssued = false;
+let fixtureTime = 1800000029999, mfaIssued = false, factorAttempts = [];
 if (process.env.EXCEL_TEST_MODE === 'totp-window') Date.now = () => fixtureTime;
 function currentTotp() {
   const counter = Buffer.alloc(8); counter.writeBigUInt64BE(BigInt(Math.floor(Date.now()/30000)));
@@ -68,15 +68,24 @@ export class TlsFingerprintTransport {
       if (mode==='no-mfa') return Response.json(workspace());
       if (mode==='post-password-foreign') return Response.json({continue_url:'https://untrusted.example/step'});
       if (mode==='email-metadata') return Response.json({page:{type:'email_verification'}});
+      if (['two-factors','many-factors','bound-factor','bound-missing','ambiguous-totp'].includes(mode)) return Response.json({page:{type:'mfa_challenge'},'oai-client-auth-session':{mfa_factors:(mode==='many-factors'?['first','second','third']:['first','second']).map(id=>({factor_type:'totp',id}))}});
       if (mode==='non-totp-factor') return Response.json({page:{type:'mfa_challenge'},'oai-client-auth-session':{mfa_factors:[{factor_type:'sms',id:'test-factor'}]}});
       if (mode==='mfa-relative') return Response.json({continue_url:'/mfa-challenge/test-factor','oai-client-auth-session':{mfa_factors:[{factor_type:'totp',id:'test-factor'}]}});
       return Response.json({page:{type:'mfa_challenge'},'oai-client-auth-session':{mfa_factors:[{factor_type:'totp',id:'test-factor'}]}});
     }
-    if (route==='POST /api/accounts/mfa/issue_challenge') {mfaIssued=true; return Response.json({});}
+    if (route==='POST /api/accounts/mfa/issue_challenge') {
+      assert.ok(!['many-factors','bound-missing'].includes(mode));
+      factorAttempts.push(JSON.parse(options.body).id);
+      if (mode==='bound-factor') assert.deepEqual(factorAttempts,['second']);
+      if (mode==='ambiguous-totp') assert.deepEqual(factorAttempts,['first']);
+      mfaIssued=true; return Response.json({});
+    }
     if (route==='POST /api/accounts/mfa/verify') {
       assert.match(JSON.parse(options.body).code,/^\d{6}$/);
       if (mode==='totp-window') assert.equal(JSON.parse(options.body).code,currentTotp());
-      if (mode==='totp') return Response.json({error:{message:'invalid_totp'}},{status:400});
+      if (mode==='totp' || (mode==='two-factors' && JSON.parse(options.body).id==='first')) return Response.json({error:{code:'invalid_totp'}},{status:400});
+      if (mode==='ambiguous-totp') return Response.json({error:{message:'invalid_totp'}},{status:400});
+      if (mode==='two-factors') assert.deepEqual(factorAttempts,['first','second']);
       if (mode==='no-workspace') return Response.json({continue_url:callback()});
       if (mode==='workspace-relative') assert.ok(options.headers.get('referer').startsWith('https://auth.openai.com/'));
       return Response.json(workspace());

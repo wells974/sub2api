@@ -126,7 +126,7 @@ class ExcelInitialLoginTests(unittest.TestCase):
             script = prepare(root, temporary)
             shutil.copyfile(Path(__file__).parent/'fixtures/excel-http-transport.mjs', script.with_name('tls-transport.mjs'))
             return script
-        for mode, code in [('success', None), ('relative', None), ('nested-relative', None), ('redirect', None),
+        scenarios = [('success', None), ('relative', None), ('nested-relative', None), ('redirect', None),
                            ('totp-window', None), ('user-id-alias', None), ('direct-password', None), ('no-mfa', None), ('no-workspace', None),
                            ('mfa-relative', None), ('workspace-relative', None), ('final-relative', None),
                            ('foreign-redirect', 'unexpected_login_step'), ('post-password-foreign', 'unexpected_login_step'),
@@ -138,14 +138,21 @@ class ExcelInitialLoginTests(unittest.TestCase):
                            ('foreign-origin', 'unexpected_login_step'), ('consent', 'interaction_required'),
                            ('phone', 'phone_verification'), ('password', 'password_rejected'), ('totp', 'totp_rejected'),
                            ('additional', 'email_verification'), ('transport', 'transport_error'),
-                           ('security', 'security_check'), ('wrong-state', 'callback_state_mismatch')]:
+                           ('security', 'security_check'), ('wrong-state', 'callback_state_mismatch')]
+        root = Path(os.environ['EXCEL_TEST_TOSUB2_ROOT'])
+        if 'TOTP_FACTOR_BINDING_REQUIRED' in (root/'src/protocol-login.mjs').read_text():
+            scenarios += [('two-factors', None), ('bound-factor', None),
+                          ('many-factors', 'interaction_required'), ('bound-missing', 'interaction_required'),
+                          ('ambiguous-totp', 'protocol_error')]
+        for mode, code in scenarios:
             with self.subTest(mode=mode):
                 api = self.api()
                 api.config.tosub2_root = Path(os.environ['EXCEL_TEST_TOSUB2_ROOT'])
                 api.claim = Mock(return_value=None)
                 api.claim_initial_excel = Mock(return_value={
                     'task_id': 123, 'account_id': 0, 'oauth_profile': 'excel', 'engine': 'local_worker',
-                    'login_email': 'test@example.test', 'password': 'synthetic-password', 'totp_secret': 'JBSWY3DPEHPK3PXP'})
+                    'login_email': 'test@example.test', 'password': 'synthetic-password', 'totp_secret': 'JBSWY3DPEHPK3PXP',
+                    'totp_factor_id': {'bound-factor': 'second', 'bound-missing': 'missing'}.get(mode, '')})
                 with patch.object(adapter, 'prepare_excel_runtime', side_effect=offline_prepare), patch.dict(
                         os.environ, {'EXCEL_TEST_MODE': mode}), self.assertLogs(worker.LOGGER, level='INFO') as logs:
                     self.assertTrue(worker.run_once(api, None))
