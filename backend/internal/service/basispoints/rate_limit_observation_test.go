@@ -45,7 +45,7 @@ func TestRateLimitObservationBeforeNormalization(t *testing.T) {
 					_, err := readRepairResponseWithContext(ctx, reader)
 					require.Error(t, err)
 				case "search":
-					_, err := readSearchRound(ctx, reader, func(string, object) error { return nil })
+					_, err := readSearchRound(ctx, reader, func(string, object, object) error { return nil })
 					require.Error(t, err)
 				case "image_compaction":
 					_, err := ReadImageCompactionWithContext(ctx, reader, nil)

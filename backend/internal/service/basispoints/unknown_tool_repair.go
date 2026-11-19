@@ -183,13 +183,9 @@ func readRepairResponseWithContext(ctx context.Context, reader io.Reader) (objec
 		if decode(data, &event) != nil {
 			return fmt.Errorf("invalid Basispoints correction event")
 		}
-		if current, ok := event["response"].(object); ok {
-			if usage, ok := current["usage"].(object); ok {
-				observedUsage = maxReportedUsage(observedUsage, usage)
-			}
-		}
-		if usage, ok := event["usage"].(object); ok {
-			observedUsage = maxReportedUsage(observedUsage, usage)
+		current, _ := event["response"].(object)
+		if sample := eventUsage(event, current); len(sample) > 0 {
+			observedUsage = maxReportedUsage(observedUsage, sample)
 		}
 		kind := text(event["type"])
 		if kind == "" {
@@ -208,6 +204,9 @@ func readRepairResponseWithContext(ctx context.Context, reader io.Reader) (objec
 		switch kind {
 		case "response.completed", "response.incomplete", "response.failed", "response.cancelled":
 			response, _ = event["response"].(object)
+			if usage, ok := event["usage"].(object); ok && response != nil {
+				response["usage"] = usage
+			}
 			if response == nil {
 				return fmt.Errorf("missing Basispoints correction response")
 			}
@@ -237,8 +236,8 @@ func readRepairResponseWithContext(ctx context.Context, reader io.Reader) (objec
 	})
 	if response == nil {
 		response = object{"usage": observedUsage}
-	} else if response["usage"] == nil {
-		response["usage"] = observedUsage
+	} else {
+		restoreRoundUsage(response, observedUsage)
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		return response, err

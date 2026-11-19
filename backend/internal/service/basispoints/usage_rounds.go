@@ -16,9 +16,11 @@ var roundCacheWriteAliases = []string{
 	"cache_write_tokens", "cache_creation_input_tokens", "cache_write_input_tokens", "cache_creation_tokens",
 }
 
+var inputAliases = []string{"input_tokens", "prompt_tokens"}
+var outputAliases = []string{"output_tokens", "completion_tokens"}
+
 var roundUsageAliases = [][]string{
-	{"input_tokens", "prompt_tokens"},
-	{"output_tokens", "completion_tokens"},
+	inputAliases, outputAliases,
 	{"input_tokens_details.cached_tokens", "prompt_tokens_details.cached_tokens", "cache_read_input_tokens", "cache_read_tokens", "cached_tokens", "prompt_cache_hit_tokens"},
 	roundCacheWriteAliases,
 }
@@ -112,6 +114,9 @@ func addRepairUsage(total object, value any) object {
 	mergeUsageFields(result, usage, sumTokens)
 	if len(total) > 0 && len(usage) > 0 {
 		reconcileUsageAliases(result, total, usage, sumTokens)
+		if !reconcileReportedTotal(result, total, usage, sumTokens) {
+			delete(result, "total_tokens")
+		}
 	}
 	a, b, firstOK := roundWriteTTL(total)
 	c, d, nextOK := roundWriteTTL(usage)
@@ -132,6 +137,40 @@ func setUsageTTL(result object, short, long int64, valid bool) {
 	}
 }
 
+// Responses envelopes may report usage beside the response. Use the same
+// precedence as the gateway when both locations are present.
+func eventUsage(event, response object) object {
+	if usage, ok := event["usage"].(object); ok {
+		return usage
+	}
+	usage, _ := response["usage"].(object)
+	return usage
+}
+
+func hasBilledUsage(usage object) bool {
+	for _, paths := range roundUsageAliases {
+		if roundCounter(usage, paths).Sign() > 0 {
+			return true
+		}
+	}
+	for _, path := range []string{"input_tokens_details.image_tokens", "prompt_tokens_details.image_tokens", "output_tokens_details.image_tokens", "completion_tokens_details.image_tokens"} {
+		parent, key := usageField(usage, path)
+		if n := tokenCount(parent[key]); n != nil && n.Sign() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// A nonzero terminal is authoritative. A missing/all-zero terminal must
+// not erase observed work before this generation is added to a correction.
+func restoreRoundUsage(response, observed object) {
+	current, _ := response["usage"].(object)
+	if len(observed) > 0 && !hasBilledUsage(current) && hasBilledUsage(observed) {
+		response["usage"] = observed
+	}
+}
+
 // Progressive events in one model generation are cumulative snapshots.
 func maxReportedUsage(first, next object) object {
 	result := object{}
@@ -139,6 +178,7 @@ func maxReportedUsage(first, next object) object {
 	mergeUsageFields(result, next, maxTokens)
 	if len(first) > 0 && len(next) > 0 {
 		reconcileUsageAliases(result, first, next, maxTokens)
+		reconcileReportedTotal(result, first, next, maxTokens)
 	}
 	target := roundCounter(result, roundCacheWriteAliases)
 	for _, snapshot := range []object{next, first} {
@@ -160,6 +200,34 @@ func maxTokens(a, b *big.Int) *big.Int {
 		return b
 	}
 	return a
+}
+
+func reportedRoundTotal(usage object) *big.Int {
+	if total := tokenCount(usage["total_tokens"]); total != nil {
+		return total
+	}
+	total := new(big.Int)
+	for _, paths := range [][]string{inputAliases, outputAliases} {
+		if tokenCount(usage[paths[0]]) == nil && tokenCount(usage[paths[1]]) == nil {
+			return nil
+		}
+		total.Add(total, roundCounter(usage, paths))
+	}
+	return total
+}
+
+// Some providers only report the gross input and output. Never expose the
+// total from a single generation as the total for multiple generations.
+func reconcileReportedTotal(dst, first, next object, combine combineTokens) bool {
+	if _, present := dst["total_tokens"]; !present {
+		return false
+	}
+	a, b := reportedRoundTotal(first), reportedRoundTotal(next)
+	if a == nil || b == nil {
+		return false
+	}
+	dst["total_tokens"] = json.Number(combine(a, b).String())
+	return true
 }
 
 func reconcileUsageAliases(dst, first, next object, combine combineTokens) {

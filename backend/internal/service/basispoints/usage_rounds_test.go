@@ -2,6 +2,8 @@ package basispoints
 
 import (
 	"fmt"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -71,4 +73,37 @@ func TestRoundUsageRequiresReportedTTLPair(t *testing.T) {
 	require.NotContains(t, sum["input_tokens_details"], "cache_write_tokens_details")
 	invalid := partial(object{"ttl_30m_tokens": "6", "ttl_12h_tokens": 4})
 	require.NotContains(t, addRepairUsage(nil, invalid)["input_tokens_details"], "cache_write_tokens_details")
+}
+
+func TestRepairReadersPreserveAReportedTerminalAndRecoverAnEmptyOne(t *testing.T) {
+	for name, read := range map[string]func(io.Reader) (object, error){
+		"unknown tool": readRepairResponse,
+		"transport":    ReadToolRepairResponse,
+	} {
+		t.Run(name, func(t *testing.T) {
+			prefix := sse(object{"type": "response.in_progress", "usage": object{"input_tokens": 40}})
+			for _, tc := range []struct {
+				terminal object
+				want     string
+			}{
+				{nil, "40"}, {object{"input_tokens": 0}, "40"}, {object{"input_tokens": 25}, "25"},
+			} {
+				end := object{"type": "response.completed", "response": object{"status": "completed", "output": []any{}}}
+				if tc.terminal != nil {
+					end["usage"] = tc.terminal
+				}
+				result, err := read(strings.NewReader(prefix + prefix + sse(end)))
+				require.NoError(t, err)
+				require.Equal(t, tc.want, fmt.Sprint(result["usage"].(object)["input_tokens"]))
+			}
+		})
+	}
+}
+
+func TestCombinedUsageOmitsIncompleteTotal(t *testing.T) {
+	a := object{"input_tokens": 4, "output_tokens": 2, "total_tokens": 6}
+	partial := object{"input_tokens": 3}
+	require.NotContains(t, addRepairUsage(a, partial), "total_tokens")
+	require.NotContains(t, addRepairUsage(partial, a), "total_tokens")
+	require.Equal(t, "6", fmt.Sprint(maxReportedUsage(a, partial)["total_tokens"]))
 }

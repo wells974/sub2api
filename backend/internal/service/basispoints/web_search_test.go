@@ -360,3 +360,23 @@ func TestWebSearchHistorySurvivesAccountSearchSwitchOff(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(body), "result body unavailable")
 }
+
+func TestSearchProgressIncludesEnvelopeUsageAndCompletedRounds(t *testing.T) {
+	var inputs []string
+	state := &searchOutputStream{id: "first", usage: object{"input_tokens": 10}, emit: func(kind string, payload object) error {
+		if kind == "response.in_progress" {
+			usage := payload["response"].(object)["usage"].(object)
+			inputs = append(inputs, fmt.Sprint(usage["input_tokens"]))
+		}
+		return nil
+	}}
+	observer := newSearchTextObserver(state, 0, false)
+	wire := sse(object{"type": "response.in_progress", "usage": object{"prompt_tokens": 20}}) +
+		sse(object{"type": "response.in_progress", "response": object{"usage": object{"input_tokens": 15}}}) +
+		sse(object{"type": "response.completed", "usage": object{"prompt_tokens": 25}, "response": object{"status": "completed", "usage": object{"input_tokens": 100}}})
+	round, err := readSearchRound(t.Context(), strings.NewReader(wire), observer.observe)
+	require.NoError(t, err)
+	require.Equal(t, []string{"30", "30"}, inputs)
+	total := addRepairUsage(state.usage, round["usage"])
+	require.Equal(t, "35", fmt.Sprint(total["input_tokens"]))
+}

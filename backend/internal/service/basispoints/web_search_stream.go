@@ -329,7 +329,7 @@ func (b *searchRoundBody) Close() error {
 	return b.err
 }
 
-func readSearchRound(ctx context.Context, reader io.Reader, observe func(string, object) error) (object, error) {
+func readSearchRound(ctx context.Context, reader io.Reader, observe func(string, object, object) error) (object, error) {
 	var response, usage object
 	var terminalErr error
 	terminal := false
@@ -346,13 +346,11 @@ func readSearchRound(ctx context.Context, reader io.Reader, observe func(string,
 			kind = event
 		}
 		observeRateLimit(ctx, "search", kind, payload)
-		if current, ok := payload["response"].(object); ok {
-			if value, ok := current["usage"].(object); ok {
-				usage = maxReportedUsage(usage, value)
-			}
-		}
-		if value, ok := payload["usage"].(object); ok {
-			usage = maxReportedUsage(usage, value)
+		current, _ := payload["response"].(object)
+		var progress object
+		if sample := eventUsage(payload, current); len(sample) > 0 {
+			usage = maxReportedUsage(usage, sample)
+			progress = usage
 		}
 		switch kind {
 		case "response.completed", "response.failed", "response.cancelled", "response.incomplete", "error":
@@ -363,12 +361,12 @@ func readSearchRound(ctx context.Context, reader io.Reader, observe func(string,
 			}
 			return io.EOF
 		}
-		return observe(kind, payload)
+		return observe(kind, payload, progress)
 	})
 	if response == nil {
 		response = object{}
 	}
-	response["usage"] = maxReportedUsage(usage, objectValue(response["usage"]))
+	response["usage"] = usage
 	if err != nil && !errors.Is(err, io.EOF) {
 		return response, err
 	}
@@ -377,8 +375,6 @@ func readSearchRound(ctx context.Context, reader io.Reader, observe func(string,
 	}
 	return response, terminalErr
 }
-
-func objectValue(value any) object { result, _ := value.(object); return result }
 
 // Citations are created only for literal source URLs actually present in text.
 func annotateSearchCitations(output []any) {

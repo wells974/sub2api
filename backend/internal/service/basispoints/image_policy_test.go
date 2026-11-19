@@ -75,7 +75,7 @@ func TestImagePolicyStreamWindowAndUsage(t *testing.T) {
 		{"type": "response.created", "response": object{"id": "resp-final"}},
 		{"type": "response.output_item.added", "output_index": 0, "item": object{"type": "message", "id": "msg-answer"}},
 		{"type": "response.output_text.delta", "output_index": 0, "delta": "answer"},
-		{"type": "response.completed", "response": object{"id": "resp-final", "status": "completed", "output": []any{object{"type": "message", "id": "msg-answer"}}, "usage": object{"input_tokens": 10, "output_tokens": 2, "total_tokens": 12}}},
+		{"type": "response.completed", "usage": object{"input_tokens": 10, "output_tokens": 2, "total_tokens": 12}, "response": object{"id": "resp-final", "status": "completed", "output": []any{object{"type": "message", "id": "msg-answer"}}, "usage": object{"input_tokens": 10, "output_tokens": 2, "total_tokens": 12}}},
 	}
 	var wire strings.Builder
 	for _, event := range events {
@@ -107,6 +107,7 @@ func TestImagePolicyStreamWindowAndUsage(t *testing.T) {
 	finalUsage, ok := final["usage"].(object)
 	require.True(t, ok)
 	require.Equal(t, json.Number("17"), finalUsage["input_tokens"])
+	require.Equal(t, finalUsage, got[5]["usage"])
 }
 func TestImagePolicyRejectsFakeCompact(t *testing.T) {
 	for _, r := range []object{{"status": "failed"}, {"status": "completed", "output": []any{message("assistant", "summary")}}, {"status": "completed", "output": []any{object{"type": "compaction", "encrypted_content": "opaque"}, object{"type": "function_call", "call_id": "unsafe"}}}} {

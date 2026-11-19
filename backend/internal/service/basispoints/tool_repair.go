@@ -361,13 +361,9 @@ func readToolRepairResponse(ctx context.Context, reader io.Reader, preserveObser
 		if decode(data, &payload) != nil || payload == nil {
 			return fmt.Errorf("invalid Basispoints correction SSE event")
 		}
-		if current, ok := payload["response"].(object); ok {
-			if usage, ok := current["usage"].(object); ok {
-				observedUsage = maxReportedUsage(observedUsage, usage)
-			}
-		}
-		if usage, ok := payload["usage"].(object); ok {
-			observedUsage = maxReportedUsage(observedUsage, usage)
+		current, _ := payload["response"].(object)
+		if sample := eventUsage(payload, current); len(sample) > 0 {
+			observedUsage = maxReportedUsage(observedUsage, sample)
 		}
 		kind := text(payload["type"])
 		if kind == "" {
@@ -384,6 +380,9 @@ func readToolRepairResponse(ctx context.Context, reader io.Reader, preserveObser
 		switch kind {
 		case "response.completed", "response.failed", "response.cancelled", "response.incomplete", "error":
 			response, _ = payload["response"].(object)
+			if usage, ok := payload["usage"].(object); ok && response != nil {
+				response["usage"] = usage
+			}
 			if kind != "response.completed" || response == nil {
 				if failure := classifyUpstreamFailure(kind, payload); failure != nil {
 					terminalError = failure
@@ -409,8 +408,8 @@ func readToolRepairResponse(ctx context.Context, reader io.Reader, preserveObser
 	hasTerminalResponse := response != nil
 	if response == nil && observedUsage != nil {
 		response = object{"usage": observedUsage}
-	} else if response != nil && response["usage"] == nil {
-		response["usage"] = observedUsage
+	} else if response != nil {
+		restoreRoundUsage(response, observedUsage)
 	}
 	if preserveObservedUsage && response != nil {
 		current, _ := response["usage"].(object)

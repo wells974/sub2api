@@ -76,22 +76,22 @@ func WithCompactedWindow(ctx context.Context, upstream io.ReadCloser, window []a
 				}
 			}
 			response, _ := p["response"].(object)
-			observed, _ := response["usage"].(object)
-			if observed == nil {
-				observed, _ = p["usage"].(object)
+			observed := eventUsage(p, response)
+			terminal := kind == "response.completed" || kind == "response.failed" || kind == "response.cancelled" || kind == "response.incomplete"
+			if !terminal && len(observed) > 0 {
+				progressiveUsage = maxReportedUsage(progressiveUsage, observed)
 			}
-			if kind != "response.completed" && kind != "response.failed" && kind != "response.cancelled" && kind != "response.incomplete" {
-				copyNonzeroImageUsage(progressiveUsage, observed)
-			}
-			if response != nil && (kind == "response.completed" || kind == "response.failed" || kind == "response.cancelled" || kind == "response.incomplete") {
+			if terminal && response != nil {
 				output, _ := response["output"].([]any)
 				response["output"] = append(append([]any{}, window...), output...)
-				current, _ := response["usage"].(object)
-				if !hasImageUsage(current) {
+				current := observed
+				if !hasBilledUsage(current) && hasBilledUsage(progressiveUsage) {
 					current = progressiveUsage
-					response["usage"] = current
 				}
 				response["usage"] = addRepairUsage(current, usage)
+				if _, ok := p["usage"].(object); ok {
+					p["usage"] = response["usage"]
+				}
 			}
 			return emit(kind, p)
 		})
@@ -130,11 +130,7 @@ func ReadImageCompactionWithContext(ctx context.Context, reader io.Reader, obser
 			observe(raw)
 		}
 		r, _ := p["response"].(object)
-		u, _ := r["usage"].(object)
-		if u == nil {
-			u, _ = p["usage"].(object)
-		}
-		copyNonzeroImageUsage(progressiveUsage, u)
+		u := eventUsage(p, r)
 		kind := text(p["type"])
 		if kind == "" {
 			kind = event
@@ -146,17 +142,20 @@ func ReadImageCompactionWithContext(ctx context.Context, reader io.Reader, obser
 		}
 		switch kind {
 		case "response.completed", "response.failed", "response.cancelled", "response.incomplete", "error":
-			response, _ = p["response"].(object)
+			response = r
+			if response != nil && u != nil {
+				response["usage"] = u
+			}
 			completed = kind == "response.completed"
 			return io.EOF
+		}
+		if len(u) > 0 {
+			progressiveUsage = maxReportedUsage(progressiveUsage, u)
 		}
 		return nil
 	})
 	if response != nil {
-		u, _ := response["usage"].(object)
-		if !hasImageUsage(u) {
-			response["usage"] = progressiveUsage
-		}
+		restoreRoundUsage(response, progressiveUsage)
 	}
 	if err != nil && err != io.EOF {
 		return response, err
@@ -165,40 +164,4 @@ func ReadImageCompactionWithContext(ctx context.Context, reader io.Reader, obser
 		return response, fmt.Errorf("image history compaction did not complete")
 	}
 	return response, nil
-}
-
-// Positive progressive fields are snapshots; a nonzero terminal is authoritative.
-func hasImageUsage(usage object) bool {
-	for _, v := range usage {
-		if nested, ok := v.(object); ok {
-			if hasImageUsage(nested) {
-				return true
-			}
-			continue
-		}
-		if n, ok := v.(json.Number); ok {
-			f, _ := n.Float64()
-			if f > 0 {
-				return true
-			}
-		}
-	}
-	return false
-}
-func copyNonzeroImageUsage(dst, src object) {
-	for k, v := range src {
-		if nested, ok := v.(object); ok {
-			target, _ := dst[k].(object)
-			if target == nil {
-				target = object{}
-				dst[k] = target
-			}
-			copyNonzeroImageUsage(target, nested)
-		} else if n, ok := v.(json.Number); ok {
-			f, _ := n.Float64()
-			if f > 0 {
-				dst[k] = v
-			}
-		}
-	}
 }

@@ -96,7 +96,7 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 	visibleContent := false
 	rejectedTool, repairSkippedReason := "", ""
 	failureStage := "bridge_protocol_conversion"
-	var terminalResponse object
+	var terminalResponse, progressiveUsage object
 	emitted := make(map[string]bool)
 	pendingTools := make(map[string]bool)
 	emit := func(kind string, payload object) error {
@@ -153,8 +153,18 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 		}
 		observeUpstreamLatency(ctx, kind, data)
 		observeRateLimit(ctx, "generation", kind, payload)
+		response, _ := payload["response"].(object)
+		if kind == "response.completed" && response != nil {
+			if usage, ok := payload["usage"].(object); ok {
+				response["usage"] = usage
+			}
+		} else if repair != nil || unknown != nil {
+			if usage := eventUsage(payload, response); len(usage) > 0 {
+				progressiveUsage = maxReportedUsage(progressiveUsage, usage)
+			}
+		}
 		if b.structured != nil && kind == "response.completed" {
-			if response, ok := payload["response"].(object); !ok || response == nil {
+			if response == nil {
 				return fmt.Errorf("basispoints structured output is missing its terminal response")
 			}
 		}
@@ -177,7 +187,7 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 			pendingTools[text(item["call_id"])+"\x00"+text(item["id"])] = true
 			return nil
 		}
-		if response, ok := payload["response"].(object); ok {
+		if response != nil {
 			if b.structured != nil {
 				config, _ := response["text"].(object)
 				if config == nil {
@@ -206,6 +216,7 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 				repairStart := -1
 				validation := b.validateToolResponse(response)
 				if validation != nil {
+					restoreRoundUsage(response, progressiveUsage)
 					failureStage = "bridge_tool_validation"
 				}
 				var rejected unknownClientToolError
@@ -255,6 +266,9 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 					return err
 				}
 
+				if _, ok := payload["usage"].(object); ok {
+					payload["usage"] = response["usage"]
+				}
 				output, _ = response["output"].([]any)
 				for i, raw := range output {
 					item, _ := raw.(object)
