@@ -28,6 +28,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
@@ -175,6 +176,8 @@ func newOpenAIWSLocalAdmissionCloseError(reason string) error {
 func shouldReportOpenAIWSProxyAccountFailure(err error) bool {
 	var recovery *service.OpenAIAgentRecoveryError
 	return err != nil &&
+		!errors.Is(err, service.ErrOpenAIWSUnsupportedWarmup) &&
+		!openAIWSIngressEndedByClient(err) &&
 		!errors.As(err, &recovery) &&
 		!errors.Is(err, errOpenAIWSUnsupportedModelSwitch) &&
 		!errors.Is(err, errOpenAIWSLocalAdmissionRejected) &&
@@ -225,10 +228,19 @@ func openAIWSIngressEndedByClient(err error) bool {
 	if errors.As(err, &closeErr) && closeErr.StatusCode() == coderws.StatusNormalClosure {
 		return true
 	}
-	if coderws.CloseStatus(err) == coderws.StatusNormalClosure {
+	if errors.Is(err, context.Canceled) {
 		return true
 	}
-	return errors.Is(err, context.Canceled)
+	// A peer's 1000 is only a transport handshake. An upstream read/write
+	// failure still belongs to the provider; a completed turn returns nil.
+	var turnErr interface{ OpenAIWSIngressStage() string }
+	if errors.As(err, &turnErr) {
+		switch turnErr.OpenAIWSIngressStage() {
+		case "read_upstream", "write_upstream":
+			return false
+		}
+	}
+	return coderws.CloseStatus(err) == coderws.StatusNormalClosure
 }
 
 // admitOpenAIWSTurn acquires one WebSocket turn's key reservation and user
@@ -651,7 +663,7 @@ func NewOpenAIGatewayHandler(
 	opsService *service.OpsService,
 	cfg *config.Config,
 ) *OpenAIGatewayHandler {
-	pingInterval := time.Duration(0)
+	pingInterval := defaultPingInterval
 	maxAccountSwitches := 3
 	if cfg != nil {
 		pingInterval = time.Duration(cfg.Concurrency.PingInterval) * time.Second
@@ -786,7 +798,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 	if normalizedBody, changed := normalizeCodexPageContext(body); changed {
 		body = normalizedBody
-		reqLog.Info("openai.codex_page_context_normalized",
+		reqLog.Info("openai.codex_untrusted_context_normalized",
 			zap.String("normalization", "call_output_to_user_message"),
 		)
 	}
@@ -1889,7 +1901,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		defaultMappedModel := strings.TrimSpace(effectiveMappedModel)
 		// 应用渠道模型映射到请求体
 		forwardBody := mappedBodyForMessages(channelMappingMsg.Mapped, channelMappingMsg.MappedModel)
-		writerSizeBeforeForward := c.Writer.Size()
+		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -1995,10 +2007,15 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						)
 						return
 					}
-					if c.Writer.Size() != writerSizeBeforeForward {
+					if !openAIForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
 						h.gatewayService.ObserveOpenAIAccountHealthFailure(c.Request.Context(), account, err)
 						h.handleAnthropicFailoverExhausted(c, failoverErr, true)
 						return
+					}
+					// Only keepalive bytes were written, so failover may continue, but
+					// every later error must be written as an SSE event.
+					if c.Writer.Written() {
+						streamStarted = true
 					}
 					if failoverErr.ShouldReportAccountScheduleFailure() {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, nil), false, nil, err)
@@ -2160,16 +2177,24 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 		h.anthropicStreamingAwareError(c, status, "api_error", failoverErr.ClientMessage, streamStarted)
 		return
 	}
+	// A failed or error frame that triggered the failover no longer reaches the
+	// client in-band, so its error passthrough rule is applied here instead.
+	if status, errType, msg, ok := service.ApplyOpenAIStreamFailedFrameRule(c, failoverErr); ok {
+		h.anthropicStreamingAwareError(c, status, errType, msg, streamStarted)
+		return
+	}
 	status, errType, errMsg := h.mapUpstreamError(failoverErr.StatusCode)
 	h.anthropicStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 
 // ensureAnthropicErrorResponse writes a fallback Anthropic error if no response was written.
 func (h *OpenAIGatewayHandler) ensureAnthropicErrorResponse(c *gin.Context, streamStarted bool) bool {
-	if c == nil || c.Writer == nil || c.Writer.Written() {
+	// Keepalive pings alone do not count as a written response, but they do
+	// commit the response as SSE, so the fallback must then be an SSE event.
+	if c == nil || c.Writer == nil || service.OpenAICompactKeepaliveAdjustedWrittenSize(c) >= 0 {
 		return false
 	}
-	h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
+	h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted || c.Writer.Written())
 	return true
 }
 
@@ -2207,6 +2232,9 @@ func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context,
 }
 
 func normalizeCodexDelegationBootstrap(body []byte) ([]byte, bool) {
+	if !mayContainCodexCallOutputCandidate(body, "create_thread", "send_message_to_thread") {
+		return body, false
+	}
 	// 已有任务通过 send_message_to_thread 唤醒时会携带 previous_response_id；
 	// 完整历史回放还会带有已配对的调用项。delegation 仍是客户端注入的用户输入，
 	// 不属于这些历史调用的结果，因此允许它与可明确配对的历史上下文共存。
@@ -2214,6 +2242,9 @@ func normalizeCodexDelegationBootstrap(body []byte) ([]byte, bool) {
 }
 
 func normalizeCodexAutomationBootstrap(body []byte) ([]byte, bool) {
+	if !mayContainCodexCallOutputCandidate(body, "automation_update") {
+		return body, false
+	}
 	return normalizeCodexCallOutputBootstrap(body, isCodexAutomationCandidate, false)
 }
 
@@ -4054,7 +4085,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if scheduleModel == "" {
 					scheduleModel = turnRequestedModel
 				}
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account, scheduleModel, openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account, scheduleModel, openAIForwardSucceededForScheduling(result), result.FirstTokenMs, turnErr)
 				inboundEndpoint := GetInboundEndpoint(c)
 				upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, result)
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
@@ -4345,7 +4376,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if hasClientCloseErr {
 					closedFields = append(closedFields, zap.String("reason", closeErr.Reason()))
 				} else {
-					closedFields = append(closedFields, zap.Error(err))
+					closedFields = append(closedFields, zap.String("error", openaiwsv2.ErrorStringForLog(err)))
 				}
 				reqLog.Info("openai.websocket_ingress_closed_normally", closedFields...)
 				// A bare coderws.CloseError or a plain cancellation carries no
@@ -4376,9 +4407,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, wsForwardModel, false, nil), false, nil, err)
 			}
 			closeStatus, closeReason := summarizeWSCloseErrorForLog(err)
+			var upstreamClose coderws.CloseError
+			if errors.As(err, &upstreamClose) {
+				closeReason = openaiwsv2.CloseReasonForLog(upstreamClose.Reason)
+			}
 			proxyFailedFields := []zap.Field{
 				zap.Int64("account_id", account.ID),
-				zap.Error(err),
+				zap.String("error", openaiwsv2.ErrorStringForLog(err)),
 				zap.String("close_status", closeStatus),
 				zap.String("close_reason", closeReason),
 			}
@@ -5131,12 +5166,19 @@ func closeOpenAIWSFailoverExhausted(c *gin.Context, conn *coderws.Conn, failover
 	errorCode := "upstream_ws_failover_exhausted"
 	message := "upstream websocket proxy failed"
 	closeStatus := coderws.StatusInternalError
+	writeErrorFrame := false
 
 	if failoverErr != nil {
 		if reason := strings.TrimSpace(string(failoverErr.Reason)); reason != "" {
 			errorCode = reason
 		}
-		if failoverErr.Stage == service.GatewayFailureStageAccountAuth {
+		if failoverErr.Reason == service.OpenAIWSModelUnavailableReason {
+			intendedStatus = failoverErr.StatusCode
+			errorType, errorCode = "invalid_request_error", "model_not_found"
+			message = "requested model is unavailable on eligible upstream accounts; reconnect with complete context"
+			closeStatus = coderws.StatusTryAgainLater
+			writeErrorFrame = true
+		} else if failoverErr.Stage == service.GatewayFailureStageAccountAuth {
 			intendedStatus = http.StatusServiceUnavailable
 			errorType = "api_error"
 			message = service.GrokCredentialUnavailableClientMessage
@@ -5164,12 +5206,15 @@ func closeOpenAIWSFailoverExhausted(c *gin.Context, conn *coderws.Conn, failover
 	if failoverErr != nil {
 		if code, safeMessage, ok := service.OpenAIUpstreamRecoveryRateLimit(failoverErr.StatusCode, failoverErr.ResponseBody); ok {
 			errorCode, message = code, safeMessage
-			payload, _ := json.Marshal(gin.H{"type": "error", "status": intendedStatus,
-				"error": gin.H{"type": errorType, "code": errorCode, "message": message}})
-			writeCtx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-			_ = service.WriteCapturedWSClient(writeCtx, conn, coderws.MessageText, payload)
-			cancel()
+			writeErrorFrame = true
 		}
+	}
+	if writeErrorFrame {
+		payload, _ := json.Marshal(gin.H{"type": "error", "status": intendedStatus,
+			"error": gin.H{"type": errorType, "code": errorCode, "message": message}})
+		writeCtx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		_ = service.WriteCapturedWSClient(writeCtx, conn, coderws.MessageText, payload)
+		cancel()
 	}
 	service.MarkOpsStreamFailure(c, errorType, errorCode, message, intendedStatus)
 	closeOpenAIClientWS(conn, closeStatus, message)
@@ -5822,8 +5867,7 @@ func summarizeWSCloseErrorForLog(err error) (string, string) {
 	closeReason := "-"
 	var closeErr coderws.CloseError
 	if errors.As(err, &closeErr) {
-		reason := strings.TrimSpace(closeErr.Reason)
-		if reason != "" {
+		if reason := strings.TrimSpace(closeErr.Reason); reason != "" {
 			closeReason = reason
 		}
 	}

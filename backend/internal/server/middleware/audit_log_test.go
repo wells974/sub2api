@@ -387,14 +387,19 @@ func TestExcelInitialLoginAuditOmitsCredentials(t *testing.T) {
 		c.Next()
 	})
 	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(auditService)))
-	router.POST("/api/v1/admin/account-ops/initial-excel-login", func(c *gin.Context) { c.JSON(http.StatusAccepted, gin.H{"ok": true}) })
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/account-ops/initial-excel-login", strings.NewReader(`{"email":"private@example.com","password":"PRIVATE_PASSWORD","mfa_secret":"PRIVATE_TOTP"}`))
-	request.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
+	for _, path := range []string{"/api/v1/admin/account-ops/initial-excel-login", "/api/v1/admin/account-ops/relogin/initial-excel-login"} {
+		router.POST(path, func(c *gin.Context) { c.JSON(http.StatusAccepted, gin.H{"ok": true}) })
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"email":"private@example.com","password":"PRIVATE_PASSWORD","mfa_secret":"PRIVATE_TOTP"}`))
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		require.Equal(t, http.StatusAccepted, recorder.Code)
+	}
 	auditService.Stop()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
-	require.Len(t, repository.logs, 1)
-	require.Equal(t, "<credential-bearing body omitted>", repository.logs[0].RequestBody)
+	require.Len(t, repository.logs, 2)
+	for _, log := range repository.logs {
+		require.Equal(t, "<credential-bearing body omitted>", log.RequestBody)
+	}
 }

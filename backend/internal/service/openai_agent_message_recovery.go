@@ -55,8 +55,9 @@ type openAIAgentRecoveryRequest struct {
 	previousResponseID   string
 	inputDigest          [32]byte
 	replaySource         []byte // immutable pre-builder source, never a retry's mutable wire
-	nativeOAuthInput     [32]byte
-	nativeOAuthPrepared  bool
+	nativeInputDigest    [32]byte
+	nativeReplayPrepared bool
+	nativeAccountID      int64
 	replayControlsDigest [32]byte
 	apiControlsDigest    [32]byte
 	apiInputDigest       [32]byte
@@ -485,8 +486,11 @@ func (s *OpenAIGatewayService) prepareOpenAIAgentRecoveryAttempt(ctx context.Con
 		return noop, openAIAgentRecoveryRefusal(ctx, "body_unreadable")
 	}
 	expectedInput, expectedControls := request.inputDigest, request.replayControlsDigest
-	if request.nativeOAuthPrepared && account.UsesOpenAICodexProtocol() && !request.omittedHistory {
-		expectedInput = request.nativeOAuthInput
+	if request.nativeReplayPrepared && !request.omittedHistory {
+		if request.nativeAccountID != account.ID {
+			return noop, openAIAgentRecoveryRefusal(ctx, "route_identity")
+		}
+		expectedInput = request.nativeInputDigest
 	}
 	if request.omittedHistory && account.IsOpenAIApiKey() && request.apiReplayPrepared {
 		expectedInput, expectedControls = request.apiInputDigest, request.apiControlsDigest
@@ -512,14 +516,14 @@ func (s *OpenAIGatewayService) prepareOpenAIAgentRecoveryAttempt(ctx context.Con
 	}
 	items := openAIAgentRecoveryItemDigests(body)
 	if len(items) != len(request.items) {
-		if request.owner != nil {
+		if request.owner != nil || request.preservesHistory() {
 			return noop, openAIAgentRecoveryError("wire_changed")
 		}
 		return noop, nil
 	}
 	for i := range items {
 		if items[i] != request.items[i] {
-			if request.owner != nil {
+			if request.owner != nil || request.preservesHistory() {
 				return noop, openAIAgentRecoveryError("wire_changed")
 			}
 			return noop, nil
@@ -538,6 +542,11 @@ func (s *OpenAIGatewayService) prepareOpenAIAgentRecoveryAttempt(ctx context.Con
 	}
 	s.prepareOpenAIReadableShadow(ctx, request, body)
 	delivery := newOpenAIAgentRecoveryDelivery(s, ctx, request, binding)
+	// Reserve only after all immutable-source, final-wire and owner gates.
+	if err := delivery.bindDiscoveryResults(); err != nil {
+		delivery.finish(false)
+		return noop, err
+	}
 	request.delivery = delivery
 	return func(completed bool) {
 		delivery.finish(completed && ctx.Err() == nil)
@@ -750,6 +759,12 @@ func (s *OpenAIGatewayService) checkOpenAIAgentRecoveryCompaction(ctx context.Co
 	}
 	if request.disableOwnerBinding {
 		return s.checkOpenAIAgentRecoveryRecords(ctx, request, openAIAgentRecoveryBinding{})
+	}
+	// An omitted-history marker is not an owner. A previous recovery may have
+	// rebuilt this context without opaque items; never dereference or invent its
+	// producer when admitting a native compaction request.
+	if request.owner == nil {
+		return openAIAgentRecoveryError("owner_unavailable")
 	}
 	model := gjson.GetBytes(body, "model").String()
 	url := req.URL.String()

@@ -283,42 +283,6 @@ func transportTarget(args object) string {
 	return ""
 }
 
-// Sum billable usage across model continuations, including failed corrections.
-func addRepairUsage(total object, value any) object {
-	usage, _ := value.(object)
-	if usage == nil {
-		return total
-	}
-	result := make(object)
-	for k, v := range total {
-		result[k] = v
-	}
-	for k, v := range usage {
-		if nested, ok := v.(object); ok {
-			previous, _ := result[k].(object)
-			result[k] = addRepairUsage(previous, nested)
-			continue
-		}
-		var n int64
-		var err error
-		switch v := v.(type) {
-		case json.Number:
-			n, err = v.Int64()
-		case int:
-			n = int64(v)
-		case int64:
-			n = v
-		default:
-			continue
-		}
-		if err == nil && n >= 0 {
-			previous, _ := result[k].(int64)
-			result[k] = previous + n
-		}
-	}
-	return result
-}
-
 // BuildToolRepairRequest extends an already prepared BPS request. It preserves
 // the model, effort, scope and native history; no client tool is executed here.
 func BuildToolRepairRequest(prepared []byte, failed map[string]any, validation error) ([]byte, error) {

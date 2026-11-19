@@ -17,7 +17,7 @@ type usageBillingRepository struct {
 	db *sql.DB
 }
 
-func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB) service.UsageBillingRepository {
+func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB) service.UsageBillingBatchRepository {
 	return &usageBillingRepository{db: sqlDB}
 }
 
@@ -80,9 +80,15 @@ func insertUsageBillingQuote(ctx context.Context, tx *sql.Tx, cmd *service.Usage
 	// of the quote (and independently of AccountQuotaCost's upstream cost basis).
 	quoted := strconv.FormatFloat(*cmd.QuotedActualCost, 'f', -1, 64)
 	canonical := max(cmd.BalanceCost, cmd.SubscriptionCost, cmd.APIKeyQuotaCost, cmd.APIKeyRateLimitCost)
+	// Both callers have already applied the normalized command's effects in tx.
+	// Quota-only, subscription and legacy quotes carry no wallet-debit evidence.
+	var payer, debit any
+	if cmd.BalanceCost > 0 {
+		payer, debit = cmd.UserID, cmd.BalanceCost
+	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO usage_billing_quotes
-		(request_id,api_key_id,request_fingerprint,quoted_actual_cost,canonical_actual_cost,quote_encoding_version)
-		VALUES($1,$2,$3,$4::numeric,$5,1)`, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint, quoted, canonical)
+		(request_id,api_key_id,request_fingerprint,quoted_actual_cost,canonical_actual_cost,quote_encoding_version,debited_user_id,wallet_debit)
+		VALUES($1,$2,$3,$4::numeric,$5,1,$6,$7)`, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint, quoted, canonical, payer, debit)
 	return err
 }
 
@@ -472,9 +478,9 @@ func userExistsForBilling(ctx context.Context, tx *sql.Tx, userID int64) (bool, 
 	return true, nil
 }
 
-func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, error) {
-	var exhausted bool
-	err := tx.QueryRowContext(ctx, `
+// usageBillingAPIKeyQuotaUpdate 累加 Key 已用额度（$1），本次累加从未达额度跨到达到额度时把 active 状态置为额度耗尽。
+// 参数：$1=金额 $2=api_key_id $3=active 状态 $4=额度耗尽状态。
+const usageBillingAPIKeyQuotaUpdate = `
 		UPDATE api_keys
 		SET quota_used = quota_used + $1,
 			status = CASE
@@ -486,7 +492,11 @@ func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID 
 				ELSE status
 			END,
 			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL
+		WHERE id = $2 AND deleted_at IS NULL`
+
+func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, error) {
+	var exhausted bool
+	err := tx.QueryRowContext(ctx, usageBillingAPIKeyQuotaUpdate+`
 		RETURNING quota > 0 AND quota_used >= quota AND quota_used - $1 < quota
 	`, amount, apiKeyID, service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).Scan(&exhausted)
 	if errors.Is(err, sql.ErrNoRows) {

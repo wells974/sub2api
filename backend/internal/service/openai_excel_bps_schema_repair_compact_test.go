@@ -49,7 +49,7 @@ func TestExcelBPSSchemaRepairCompactionUsage(t *testing.T) {
 					if scenario == "visible_window" {
 						output = append(output, map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "retained history"}}})
 					}
-					wire, err := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"id": "compact", "status": "completed", "output": output, "usage": map[string]any{"input_tokens": 7, "output_tokens": 3, "input_tokens_details": map[string]any{"cache_write_tokens": 3, "cache_write_tokens_details": map[string]int{"ttl_30m_tokens": 1, "ttl_12h_tokens": 2}}}}})
+					wire, err := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"id": "compact", "status": "completed", "output": output, "usage": map[string]any{"prompt_tokens": 7, "completion_tokens": 3, "prompt_tokens_details": map[string]any{"cache_creation_tokens": 3, "cache_write_tokens_details": map[string]int{"ttl_30m_tokens": 1, "ttl_12h_tokens": 2}}}}})
 					require.NoError(t, err)
 					return bpsCompletionResponse(200, "data: "+string(wire)+"\n\n"), nil
 				}

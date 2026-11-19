@@ -133,10 +133,19 @@ func TestManagedBPSConnectionBillsCacheCreationAsShownToClient(t *testing.T) {
 					require.Equal(t, wantCreation, log.CacheCreationTokens)
 					require.Equal(t, want30m, log.CacheCreation30mTokens)
 					require.Equal(t, want12h, log.CacheCreation12hTokens)
-					require.Equal(t, 100, log.CacheReadTokens)
+					require.Equal(t, 100, shown.CacheReadInputTokens)
+					require.Equal(t, shown.CacheReadInputTokens, log.CacheReadTokens)
 					require.InDelta(t, float64(wantInput)*5e-6, log.InputCost, 1e-12)
 					require.InDelta(t, cacheCost, log.CacheCreationCost, 1e-12)
+					// The response reports gross input. The ledger partitions that same
+					// request into mutually exclusive buckets before posting one debit.
+					require.Equal(t, shown.InputTokens, log.InputTokens+log.CacheCreationTokens+log.CacheReadTokens)
+					require.Equal(t, shown.OutputTokens, log.OutputTokens)
+					wantTotal := float64(wantInput)*5e-6 + cacheCost + 100*0.5e-6 + 50*30e-6
+					require.InDelta(t, wantTotal, log.TotalCost, 1e-12)
 					require.Equal(t, 1, billingRepo.calls)
+					require.NotNil(t, billingRepo.lastCmd)
+					require.InDelta(t, wantTotal*1.1, billingRepo.lastCmd.BalanceCost, 1e-12)
 					require.Equal(t, wantInput, billingRepo.lastCmd.InputTokens)
 					require.Equal(t, wantCreation, billingRepo.lastCmd.CacheCreationTokens)
 				})

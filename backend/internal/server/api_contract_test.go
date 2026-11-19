@@ -915,7 +915,7 @@ func TestAPIContracts(t *testing.T) {
 					"excel_bps_image_budget_mib": 1024,
 					"excel_bps_image_max_requests": 128,
 					"excel_bps_image_max_images": 20,
- "smart_ops_hidden_menu_items": ["/admin/lottery","/admin/qqbot/overview","/admin/channel-operations","/admin/controlled-experiments","/admin/account-ops","/admin/token-guard","/admin/group-cache-tests","/admin/request-captures","/admin/harvest-flow"],
+ "smart_ops_hidden_menu_items": ["/admin/lottery","/admin/qqbot/overview","/admin/channel-operations","/admin/controlled-experiments","/admin/account-ops","/admin/group-cache-tests","/admin/request-captures"],
  "request_capture_enabled": false,
  "request_capture_quota_mib": 1024,
  "request_capture_retention_days": 7,
@@ -1302,7 +1302,7 @@ func TestAPIContracts(t *testing.T) {
 					"excel_bps_image_budget_mib": 1024,
 					"excel_bps_image_max_requests": 128,
 					"excel_bps_image_max_images": 20,
- "smart_ops_hidden_menu_items": ["/admin/lottery","/admin/qqbot/overview","/admin/channel-operations","/admin/controlled-experiments","/admin/account-ops","/admin/token-guard","/admin/group-cache-tests","/admin/request-captures","/admin/harvest-flow"],
+ "smart_ops_hidden_menu_items": ["/admin/lottery","/admin/qqbot/overview","/admin/channel-operations","/admin/controlled-experiments","/admin/account-ops","/admin/group-cache-tests","/admin/request-captures"],
  "request_capture_enabled": false,
  "request_capture_quota_mib": 1024,
  "request_capture_retention_days": 7,
@@ -2172,6 +2172,10 @@ func (s *stubAccountRepo) ClearAntigravityQuotaScopes(ctx context.Context, id in
 }
 
 func (s *stubAccountRepo) ClearModelRateLimits(ctx context.Context, id int64) error {
+	return errors.New("not implemented")
+}
+
+func (s *stubAccountRepo) ClearModelRateLimit(ctx context.Context, id int64, scope string) error {
 	return errors.New("not implemented")
 }
 

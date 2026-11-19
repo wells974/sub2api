@@ -5,6 +5,8 @@ set -euo pipefail
 tree="${2:-.}"
 baseline=$(git -C "$tree" rev-parse "$1^{commit}")
 candidate=$(git -C "$tree" rev-parse "${3:-HEAD}^{commit}")
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python3 "$script_dir/prepare-upstream-v0222-red-fixtures.py" "$baseline" "$tree" "$candidate"
 
 exclude_absent_fixture() {
   local target="$1" contract="$2"
@@ -31,6 +33,15 @@ exclude_absent_fixture() {
   rm -- "$tree/$target"
   test ! -e "$tree/$target"
 }
+
+# Full historical overlays restore the old APIKeyListFilters as well. Preserve
+# the later usage tests in selective overlays and every candidate GREEN; only
+# the exact old contract can justify excluding this independent fixture.
+usage_contract=backend/internal/service/api_key.go
+if ! git -C "$tree" grep -q 'UsageStartTime' "$baseline" -- "$usage_contract" &&
+   test "$(git -C "$tree" hash-object "$usage_contract")" = "$(git -C "$tree" rev-parse "$baseline:$usage_contract")"; then
+  bash "$(dirname "${BASH_SOURCE[0]}")/prepare-usage-sort-red-fixture.sh" "$baseline" "$tree" "$candidate"
+fi
 
 # Full old-source overlays remove the unit-only OAuth dial seam alongside
 # later production files. This separate, later Issue842 matrix is not selected
@@ -141,4 +152,29 @@ if ! git -C "$tree" grep -q 'InitialAPIKeyDisposition' "$baseline" -- "$contract
   else
     exclude_absent_fixture "$target" "$contract"
   fi
+fi
+
+# Issue907 model-failure tests are unrelated to these historical replay oracles.
+# Full source overlays remove their later production API; preserve every GREEN
+# test and exclude the new fixture only with exact baseline/candidate evidence.
+target=backend/internal/service/openai_ws_model_failure_test.go
+contract=backend/internal/service/openai_ws_forwarder_support.go
+if git -C "$tree" cat-file -e "$candidate:$target" 2>/dev/null &&
+   ! test -f "$tree/backend/internal/service/openai_ws_model_failure.go"; then
+  exclude_absent_fixture "$target" "$contract"
+fi
+
+# PR899's platform-edit fixtures require UpdateAccountInput.Platform, absent
+# from older complete recovery trees. Exclude only these later, unselected
+# fixtures and prove that the production contract is the exact historical blob.
+contract=backend/internal/service/admin_service.go
+if ! git -C "$tree" show "$baseline:$contract" |
+     sed -n '/^type UpdateAccountInput struct {/,/^}/p' |
+     grep -E '^[[:space:]]*Platform[[:space:]]' >/dev/null &&
+   test "$(git -C "$tree" hash-object "$contract")" = "$(git -C "$tree" rev-parse "$baseline:$contract")"; then
+  for target in backend/internal/service/admin_account_platform_test.go backend/internal/service/pr899_independent_platform_test.go backend/internal/service/pr899_vertex_auth_test.go; do
+    if git -C "$tree" cat-file -e "$candidate:$target" 2>/dev/null; then
+      exclude_absent_fixture "$target" "$contract"
+    fi
+  done
 fi

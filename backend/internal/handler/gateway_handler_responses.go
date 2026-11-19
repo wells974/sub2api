@@ -16,10 +16,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Responses handles OpenAI Responses API endpoint for Anthropic platform groups.
-// POST /v1/responses
-// This converts Responses API requests to Anthropic format, forwards to Anthropic
-// upstream, and converts responses back to Responses format.
+// Responses handles POST /v1/responses for compatible platform groups.
 func (h *GatewayHandler) Responses(c *gin.Context) {
 	streamStarted := false
 
@@ -87,6 +84,12 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	}
 	if rejectSystemOneOnlyPlatform(c, apiKey, h.responsesErrorResponse) {
 		return
+	}
+	if cappedBody, changed, err := applyOpenAIReasoningEffortPolicyForRequest(c, apiKey, body); err != nil {
+		respondOpenAIReasoningEffortPolicyError(c, err, h.responsesErrorResponse)
+		return
+	} else if changed {
+		body = cappedBody
 	}
 	reqStream, ok := parseOpenAICompatibleStream(body)
 	if !ok {
@@ -301,6 +304,23 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 			}
 			setActualUpstreamEndpoint(c, EndpointAntigravityGenerateContent)
 			result, err = h.antigravityGatewayService.ForwardAsResponses(requestCtx, c, account, forwardBody, parsedReq)
+		} else if account.Platform == service.PlatformGemini {
+			if h.geminiCompatService == nil {
+				message := "Gemini compatibility service is not configured"
+				if c.Writer.Written() && strings.HasPrefix(c.Writer.Header().Get("Content-Type"), "text/event-stream") {
+					service.MarkOpsStreamError(c, "upstream_error", message, http.StatusBadGateway)
+					service.MarkResponseCommitted(c)
+					writeResponsesFailedSSE(c, "upstream_error", "", message)
+				} else {
+					h.responsesErrorResponse(c, http.StatusBadGateway, "upstream_error", message)
+				}
+				if accountReleaseFunc != nil {
+					accountReleaseFunc()
+				}
+				return
+			}
+			setActualUpstreamEndpoint(c, EndpointGeminiModels)
+			result, err = h.geminiCompatService.ForwardAsResponses(requestCtx, c, account, forwardBody)
 		} else {
 			result, err = h.gatewayService.ForwardAsResponses(requestCtx, c, account, forwardBody, parsedReq)
 		}
@@ -381,6 +401,9 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				zap.Bool("upstream_error_response_already_written", upstreamErrorAlreadyCommunicated),
 				zap.Error(err),
 			)
+			// The response is already committed, so the client retries; send that
+			// retry through scheduling again instead of back to this account.
+			h.gatewayService.ReleaseStickySessionAfterCommittedNoContent(context.WithoutCancel(requestCtx), apiKey.GroupID, sessionHash, account.ID, err)
 			if result != nil {
 				submitForwardUsage(result)
 			}

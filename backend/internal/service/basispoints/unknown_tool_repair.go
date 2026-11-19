@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
+
 	"strings"
 )
 
@@ -96,7 +96,7 @@ func (b *Bridge) repairUnknownContinuation(ctx context.Context, original object,
 	corrected, err := repair(ctx, original, validation)
 	first, _ := original["usage"].(object)
 	second, _ := corrected["usage"].(object)
-	original["usage"] = mergeUsage(first, second)
+	original["usage"] = addRepairUsage(first, second)
 	if err != nil {
 		return nil, -1, err
 	}
@@ -251,29 +251,6 @@ func readRepairResponseWithContext(ctx context.Context, reader io.Reader) (objec
 
 // Token counters are JSON integers. Preserve exact counters without float64,
 // and combine nested cached/reasoning details for both provider attempts.
-func mergeUsage(first, second object) object {
-	result := make(object)
-	for key, v := range first {
-		result[key] = v
-	}
-	for key, v := range second {
-		if nested, ok := v.(object); ok {
-			before, _ := result[key].(object)
-			result[key] = mergeUsage(before, nested)
-			continue
-		}
-		a, okA := new(big.Int).SetString(fmt.Sprint(result[key]), 10)
-		n, okB := new(big.Int).SetString(fmt.Sprint(v), 10)
-		if okB && n.Sign() >= 0 {
-			if okA && a.Sign() >= 0 {
-				n.Add(a, n)
-			}
-			result[key] = json.Number(n.String())
-		}
-	}
-	return result
-}
-
 func (b *Bridge) repairResponse(ctx context.Context, original object, repair RepairToolCall) (object, int, error) {
 	reader, err := repair(ctx)
 	if err != nil {
@@ -283,7 +260,7 @@ func (b *Bridge) repairResponse(ctx context.Context, original object, repair Rep
 	corrected, err := readRepairResponseWithContext(ctx, reader)
 	first, _ := original["usage"].(object)
 	second, _ := corrected["usage"].(object)
-	original["usage"] = mergeUsage(first, second)
+	original["usage"] = addRepairUsage(first, second)
 	if err != nil {
 		return nil, -1, err
 	}
@@ -305,29 +282,4 @@ func (b *Bridge) repairResponse(ctx context.Context, original object, repair Rep
 		return nil, -1, err
 	}
 	return merged, index, nil
-}
-
-// Progressive usage reports are snapshots, not separate charges. Retain only
-// their maxima as a fallback when a failed correction has no terminal usage.
-func maxReportedUsage(first, second object) object {
-	result := make(object)
-	for key, v := range first {
-		result[key] = v
-	}
-	for key, v := range second {
-		if nested, ok := v.(object); ok {
-			before, _ := result[key].(object)
-			result[key] = maxReportedUsage(before, nested)
-			continue
-		}
-		n, valid := new(big.Int).SetString(fmt.Sprint(v), 10)
-		if !valid || n.Sign() < 0 {
-			continue
-		}
-		old, exists := new(big.Int).SetString(fmt.Sprint(result[key]), 10)
-		if !exists || n.Cmp(old) > 0 {
-			result[key] = json.Number(n.String())
-		}
-	}
-	return result
 }

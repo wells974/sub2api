@@ -26,16 +26,20 @@ type excelInitialLogin struct {
 }
 
 type excelInitialInput struct {
-	AccountTokenGuardReloginAccount
+	OpenAIReloginCredentials
 	ProxyURL string `json:"proxy_url"`
 }
 
-func (s *OpenAIOAuthReauthService) StartExcelInitialLogin(ctx context.Context, entry AccountTokenGuardReloginAccount, proxyID *int64) (*OpenAITwoFALoginJob, error) {
-	if err := s.ensureReady(); err != nil {
-		return nil, err
-	}
+func (s *OpenAIReloginService) StartExcelInitialLogin(ctx context.Context, entry OpenAIReloginCredentials, proxyID *int64) (*OpenAITwoFALoginJob, error) {
 	if err := ValidateOpenAITwoFALogin(entry); err != nil {
 		return nil, infraerrors.BadRequest("EXCEL_LOGIN_INVALID", "Valid email, password and 2FA secret are required")
+	}
+	return s.reauth.enqueueExcelInitialLogin(ctx, entry, proxyID)
+}
+
+func (s *OpenAIOAuthReauthService) enqueueExcelInitialLogin(ctx context.Context, entry OpenAIReloginCredentials, proxyID *int64) (*OpenAITwoFALoginJob, error) {
+	if err := s.ensureReady(); err != nil {
+		return nil, err
 	}
 	if err := s.ensureDurableEncryption(); err != nil {
 		return nil, err

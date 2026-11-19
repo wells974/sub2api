@@ -200,7 +200,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			}
 			body = pinnedBody
 		} else {
-			accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+			accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c), codexClientSessionID(c))
 			if scopeErr != nil {
 				return nil, scopeErr
 			}
@@ -2031,6 +2031,9 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverErrorWithModel(
 	}
 	failoverErr := s.newOpenAIAccountFailoverErrorWithClassificationHeaders(account, statusCode, headers, classificationHeaders, payload, message, shouldDisable, retryableOnSameAccount)
 	failoverErr = failoverErr.WithGrokForbiddenPolicy(account)
+	if len(payload) > 0 && account != nil {
+		failoverErr.StreamFailedFrame = &OpenAIStreamFailedFrame{Platform: account.Platform, Payload: payload, Message: message}
+	}
 	if failoverErr.IsCredentialFailure() || failoverErr.RequestScopedTransient {
 		return failoverErr
 	}
@@ -2483,6 +2486,16 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithImage(
 					if shouldFailover {
 						return resultWithUsage(),
 							s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, dataBytes, failedMessage, mappedModel, resp.Header)
+					}
+					// Configured cooldowns are independent of replay eligibility.
+					// Preserve request-scoped errors and bare-error/failed deduplication.
+					accountSideEffectsAllowed := account != nil && account.Platform == PlatformOpenAI && !cyberHit &&
+						!isOpenAIContextWindowError(failedMessage, dataBytes) && !isOpenAIInvalidEncryptedContentSSE(dataBytes, eventType)
+					if codexFailureTerminal && eventType == "error" {
+						bareErrorAccountSideEffectsPending = accountSideEffectsAllowed
+					} else if accountSideEffectsAllowed {
+						s.handleOpenAIStreamTerminalAccountSideEffects(c, account, dataBytes, failedMessage, resp.Header, mappedModel)
+						bareErrorAccountSideEffectsPending = false
 					}
 					if !cyberHit && !sawBareError {
 						if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {

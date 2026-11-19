@@ -33,7 +33,7 @@ func TestExcelInitialWorkerEndpointsRequireAuthentication(t *testing.T) {
 func TestExcelInitialLoginRejectsMalformedInputWithoutEcho(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.POST("/start", (&OpenAIOAuthReauthHandler{}).StartExcelInitialLogin)
+	router.POST("/start", (&OpenAIReloginHandler{}).StartExcelInitialLogin)
 	for _, body := range []string{`{"password":"PRIVATE_VALUE","proxy_id":"wrong"}`, `{"password":"PRIVATE_VALUE` + strings.Repeat("x", 17000) + `"}`} {
 		req := httptest.NewRequest(http.MethodPost, "/start", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")

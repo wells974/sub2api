@@ -8,9 +8,13 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 var codexModelMap = map[string]string{
+	"gpt-6.2-sol":          "gpt-6.2-sol",
+	"gpt-6.2-astra":        "gpt-6.2-astra",
 	"gpt-6.1-terra":        "gpt-6.1-terra",
 	"gpt-6.1-sol":          "gpt-6.1-sol",
 	"gpt-6-sol":            "gpt-6-sol",
@@ -65,6 +69,8 @@ var codexVersionModelPrefixes = []struct {
 	target string
 }{
 	{prefix: "gpt-6.1-terra", target: "gpt-6.1-terra"},
+	{prefix: "gpt-6.2-sol", target: "gpt-6.2-sol"},
+	{prefix: "gpt-6.2-astra", target: "gpt-6.2-astra"},
 	{prefix: "gpt-6.1-sol", target: "gpt-6.1-sol"},
 	{prefix: "gpt-6-sol", target: "gpt-6-sol"},
 	{prefix: "gpt-6-luna", target: "gpt-6-luna"},
@@ -1424,11 +1430,16 @@ func extractPromptLikeInstructionsFromInput(reqBody map[string]any) string {
 	return strings.Join(texts, "\n\n")
 }
 
-// defaultCodexSynthInstructions 返回合成路径在 instructions 为空时应填入的默认提示词。
+// defaultCodexSynthInstructions returns the compatibility default for an empty
+// instructions field. GPT-6.1 Sol accepts an empty field: do not turn an ordinary
+// API request into a Codex coding task or charge for an unsolicited base prompt.
 //
-// 按 model 选择真实 Codex CLI 的 base instructions，使合成请求在提示词层面贴近真实 Codex 行为；
-// 若内嵌 prompt 意外为空，回退到最小占位符以保证字段非空。
+// Other models keep their existing model-specific Codex prompt and nonempty
+// fallback for upstream compatibility.
 func defaultCodexSynthInstructions(model string) string {
+	if openai.IsGPT61SolModelSpelling(model) {
+		return ""
+	}
 	if instructions := strings.TrimSpace(openai.CodexBaseInstructionsForModel(model)); instructions != "" {
 		return instructions
 	}
@@ -1510,7 +1521,11 @@ func applyInstructions(reqBody map[string]any, isCodexCLI bool) bool {
 		return false
 	}
 	model, _ := reqBody["model"].(string)
-	reqBody["instructions"] = defaultCodexSynthInstructions(model)
+	instructions := defaultCodexSynthInstructions(model)
+	if existing, ok := reqBody["instructions"].(string); ok && existing == instructions {
+		return false
+	}
+	reqBody["instructions"] = instructions
 	return true
 }
 
@@ -1610,9 +1625,84 @@ func codexInputCallIDs(input []any) map[string]struct{} {
 	return callIDs
 }
 
+// Only compact UUID-shaped declaration IDs; other provider IDs are opaque.
+func normalizeCodexAdditionalToolsID(id string) string {
+	if len(id) != 39 || !strings.HasPrefix(id, "at_") ||
+		id[11] != '-' || id[16] != '-' || id[21] != '-' || id[26] != '-' {
+		return id
+	}
+	compactUUID := strings.ReplaceAll(id[3:], "-", "")
+	if len(compactUUID) != 32 {
+		return id
+	}
+	if _, err := hex.DecodeString(compactUUID); err != nil {
+		return id
+	}
+	return "at_" + compactUUID
+}
+
+func codexAdditionalToolsIDMappings(input []any) map[string]string {
+	mappings := make(map[string]string)
+	for _, rawItem := range input {
+		item, ok := rawItem.(map[string]any)
+		if !ok || item["type"] != "additional_tools" {
+			continue
+		}
+		if id, ok := item["id"].(string); ok {
+			if normalizedID := normalizeCodexAdditionalToolsID(id); normalizedID != id {
+				mappings[id] = normalizedID
+			}
+		}
+	}
+	return mappings
+}
+
+// The passthrough/WebSocket compatibility path must not decode and re-encode
+// whole requests. Patch only declaration IDs and references to those declarations.
+func normalizeCodexAdditionalToolsIDsBody(body []byte) ([]byte, bool, error) {
+	input := parseRawJSONView(body).Get("input")
+	if !input.IsArray() {
+		return body, false, nil
+	}
+	mappings := make(map[string]string)
+	input.ForEach(func(_, item gjson.Result) bool {
+		if id := item.Get("id"); item.Get("type").String() == "additional_tools" && id.Type == gjson.String {
+			if normalizedID := normalizeCodexAdditionalToolsID(id.Str); normalizedID != id.Str {
+				mappings[id.Str] = normalizedID
+			}
+		}
+		return true
+	})
+	if len(mappings) == 0 {
+		return body, false, nil
+	}
+	items := make([]string, 0)
+	var patchErr error
+	input.ForEach(func(_, item gjson.Result) bool {
+		raw := item.Raw
+		if typ := item.Get("type").String(); typ == "additional_tools" || typ == "item_reference" {
+			if id := item.Get("id"); id.Type == gjson.String {
+				if normalizedID, mapped := mappings[id.Str]; mapped {
+					raw, patchErr = sjson.Set(raw, "id", normalizedID)
+					if patchErr != nil {
+						return false
+					}
+				}
+			}
+		}
+		items = append(items, raw)
+		return true
+	})
+	if patchErr != nil {
+		return body, false, fmt.Errorf("normalize additional_tools ID: %w", patchErr)
+	}
+	return replaceOpenAIRawInput(body, input, items), true, nil
+}
+
 func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []any {
 	filtered := make([]any, 0, len(input))
 	referenceIDMappings := codexItemReferenceIDMappings(input, opts.PreserveCallIDs)
+	additionalToolsIDMappings := codexAdditionalToolsIDMappings(input)
 	inputItemIDs := codexInputItemIDs(input)
 	inputCallIDs := codexInputCallIDs(input)
 	for _, item := range input {
@@ -1674,6 +1764,11 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 			newItem := make(map[string]any, len(m))
 			for key, value := range m {
 				newItem[key] = value
+			}
+			if id, ok := newItem["id"].(string); ok {
+				if normalizedID, mapped := additionalToolsIDMappings[id]; mapped {
+					newItem["id"] = normalizedID
+				}
 			}
 			if id, ok := newItem["id"].(string); ok && strings.HasPrefix(strings.TrimSpace(id), "call_") {
 				trimmedID := strings.TrimSpace(id)
@@ -1746,7 +1841,17 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 			}
 		}
 
-		if !opts.PreserveReferences {
+		// additional_tools IDs identify declarations carried in this request,
+		// not stored history. Removing them can change native tool discovery
+		// into ordinary function calls even with store=false.
+		if typ == "additional_tools" {
+			if id, ok := m["id"].(string); ok {
+				if normalizedID, mapped := additionalToolsIDMappings[id]; mapped {
+					ensureCopy()
+					newItem["id"] = normalizedID
+				}
+			}
+		} else if !opts.PreserveReferences {
 			ensureCopy()
 			delete(newItem, "id")
 		} else if id, ok := m["id"].(string); ok && shouldStripOpenAIResponsesInputItemID(typ, id) {

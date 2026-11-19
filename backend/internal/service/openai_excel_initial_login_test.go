@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func initialExcelFixture(t *testing.T) (*OpenAIOAuthReauthService, AccountTokenGuardReloginAccount) {
+func initialExcelFixture(t *testing.T) (*OpenAIOAuthReauthService, OpenAIReloginCredentials) {
 	t.Helper()
 	svc, reader, _, _, _, _ := newReauthTestService("acct-1")
 	reader.account = nil // Initial authorization must work before any account exists.
@@ -31,12 +31,13 @@ func initialExcelFixture(t *testing.T) (*OpenAIOAuthReauthService, AccountTokenG
 			svc.DeleteExcelInitialLogin(id)
 		}
 	})
-	return svc, AccountTokenGuardReloginAccount{Email: "USER@example.com", Password: "PRIVATE_PASSWORD", MFASecret: "PRIVATE_TOTP"}
+	return svc, OpenAIReloginCredentials{Email: "USER@example.com", Password: "PRIVATE_PASSWORD", MFASecret: "PRIVATE_TOTP"}
 }
 
 func TestExcelInitialLoginLifecycleAndIsolation(t *testing.T) {
 	svc, entry := initialExcelFixture(t)
-	job, err := svc.StartExcelInitialLogin(context.Background(), entry, nil)
+	login := NewOpenAIReloginService(nil, svc)
+	job, err := login.StartExcelInitialLogin(context.Background(), entry, nil)
 	require.NoError(t, err)
 	id, err := strconv.ParseInt(job.ID, 10, 64)
 	require.NoError(t, err)
@@ -44,7 +45,7 @@ func TestExcelInitialLoginLifecycleAndIsolation(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(public), "PRIVATE_")
 	require.Nil(t, job.Credential)
-	_, err = svc.StartExcelInitialLogin(context.Background(), entry, nil)
+	_, err = login.StartExcelInitialLogin(context.Background(), entry, nil)
 	require.ErrorContains(t, err, "already running")
 	claim, err := svc.ClaimExcelInitialLogin("worker-1")
 	require.NoError(t, err)
@@ -86,7 +87,8 @@ func TestExcelInitialLoginRejectsCredentialsAndCanceledCallbacks(t *testing.T) {
 	for _, scenario := range []string{"cancel", "expired_task", "fail", "wrong_client", "wrong_email", "wrong_workspace", "expired"} {
 		t.Run(scenario, func(t *testing.T) {
 			svc, entry := initialExcelFixture(t)
-			job, err := svc.StartExcelInitialLogin(context.Background(), entry, nil)
+			login := NewOpenAIReloginService(nil, svc)
+			job, err := login.StartExcelInitialLogin(context.Background(), entry, nil)
 			require.NoError(t, err)
 			claim, err := svc.ClaimExcelInitialLogin("worker-1")
 			require.NoError(t, err)
@@ -130,18 +132,19 @@ func TestExcelInitialLoginRejectsCredentialsAndCanceledCallbacks(t *testing.T) {
 
 func TestExcelInitialLoginPreconditionsAndConcurrentClaim(t *testing.T) {
 	svc, entry := initialExcelFixture(t)
+	login := NewOpenAIReloginService(nil, svc)
 	svc.excelInitialWorkerSeen.Store(0)
-	_, err := svc.StartExcelInitialLogin(context.Background(), entry, nil)
+	_, err := login.StartExcelInitialLogin(context.Background(), entry, nil)
 	require.ErrorContains(t, err, "worker is not ready")
 	svc.excelInitialWorkerSeen.Store(time.Now().UnixNano())
 	svc.encryptionKeyConfigured = false
-	_, err = svc.StartExcelInitialLogin(context.Background(), entry, nil)
+	_, err = login.StartExcelInitialLogin(context.Background(), entry, nil)
 	require.Error(t, err)
 	svc.encryptionKeyConfigured = true
 	badProxy := int64(-1)
-	_, err = svc.StartExcelInitialLogin(context.Background(), entry, &badProxy)
+	_, err = login.StartExcelInitialLogin(context.Background(), entry, &badProxy)
 	require.Error(t, err)
-	_, err = svc.StartExcelInitialLogin(context.Background(), entry, nil)
+	_, err = login.StartExcelInitialLogin(context.Background(), entry, nil)
 	require.NoError(t, err)
 	var wg sync.WaitGroup
 	claims := make(chan *OpenAIOAuthReauthClaim, 8)
@@ -162,11 +165,12 @@ func TestExcelInitialLoginPreconditionsAndConcurrentClaim(t *testing.T) {
 
 func TestExcelInitialLoginRuntimeFailureIsActionable(t *testing.T) {
 	svc, entry := initialExcelFixture(t)
+	login := NewOpenAIReloginService(nil, svc)
 	svc.excelInitialWorkerSeen.Store(0)
 	// Invalid versions cannot start any download, even on Linux.
 	svc.worker = reauthruntime.New(t.TempDir(), "dev", "http://localhost", "PRIVATE_WORKER_TOKEN")
 	t.Cleanup(svc.stopWorker)
-	job, err := svc.StartExcelInitialLogin(context.Background(), entry, nil)
+	job, err := login.StartExcelInitialLogin(context.Background(), entry, nil)
 	require.Nil(t, job)
 	require.Equal(t, "OPENAI_REAUTH_WORKER_UNAVAILABLE", infraerrors.Reason(err))
 	require.Equal(t, svc.WorkerStatus().Reason, infraerrors.FromError(err).Metadata["worker_reason"])
@@ -176,11 +180,12 @@ func TestExcelInitialLoginRuntimeFailureIsActionable(t *testing.T) {
 
 func TestExcelInitialLoginRuntimeNotYetStartedIsPreparing(t *testing.T) {
 	svc, entry := initialExcelFixture(t)
+	login := NewOpenAIReloginService(nil, svc)
 	svc.excelInitialWorkerSeen.Store(0)
 	svc.worker = reauthruntime.New(t.TempDir(), "2.21.5.2", "http://localhost", "PRIVATE_WORKER_TOKEN")
 	// Freeze the manager in idle so this unit test cannot download a runtime.
 	svc.worker.Stop()
-	job, err := svc.StartExcelInitialLogin(context.Background(), entry, nil)
+	job, err := login.StartExcelInitialLogin(context.Background(), entry, nil)
 	require.Nil(t, job)
 	require.Equal(t, "EXCEL_LOGIN_WORKER_PREPARING", infraerrors.Reason(err))
 	require.Empty(t, svc.excelInitialJobs)
@@ -188,9 +193,10 @@ func TestExcelInitialLoginRuntimeNotYetStartedIsPreparing(t *testing.T) {
 
 func TestExcelInitialLoginUsesSelectedProxyWithoutExistingAccount(t *testing.T) {
 	svc, entry := initialExcelFixture(t)
+	login := NewOpenAIReloginService(nil, svc)
 	proxyID := int64(7)
 	svc.accounts.(*reauthTestAccountReader).proxy = &Proxy{ID: proxyID, Protocol: "socks5h", Host: "203.0.113.9", Port: 1080, Status: StatusActive}
-	_, err := svc.StartExcelInitialLogin(context.Background(), entry, &proxyID)
+	_, err := login.StartExcelInitialLogin(context.Background(), entry, &proxyID)
 	require.NoError(t, err)
 	claim, err := svc.ClaimExcelInitialLogin("worker-1")
 	require.NoError(t, err)
@@ -211,7 +217,8 @@ func TestExcelInitialLoginFailureDetailsAreSafeAndOwned(t *testing.T) {
 	} {
 		t.Run(tc.wantCode+tc.code, func(t *testing.T) {
 			svc, entry := initialExcelFixture(t)
-			job, err := svc.StartExcelInitialLogin(context.Background(), entry, nil)
+			login := NewOpenAIReloginService(nil, svc)
+			job, err := login.StartExcelInitialLogin(context.Background(), entry, nil)
 			require.NoError(t, err)
 			claim, err := svc.ClaimExcelInitialLogin("worker-1")
 			require.NoError(t, err)

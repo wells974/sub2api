@@ -7,11 +7,11 @@ import { getCredentialEncryption, initializeCredentialEncryption } from '@/api/a
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import OpenAITwoFAImport from '../OpenAITwoFAImport.vue'
-import { deleteTwoFALogin, getTwoFALogin, startTwoFALogin, startExcelTwoFALogin, getExcelTwoFALogin, deleteExcelTwoFALogin } from '@/api/admin/accountTokenGuard'
+import { deleteTwoFALogin, getTwoFALogin, startTwoFALogin, startExcelTwoFALogin, getExcelTwoFALogin, deleteExcelTwoFALogin } from '@/api/admin/openaiRelogin'
 
 vi.mock('vue-i18n', async importOriginal => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key }) }))
-vi.mock('@/api/admin/accountTokenGuard', async importOriginal => ({
-  ...await importOriginal<typeof import('@/api/admin/accountTokenGuard')>(),
+vi.mock('@/api/admin/openaiRelogin', async importOriginal => ({
+  ...await importOriginal<typeof import('@/api/admin/openaiRelogin')>(),
   startTwoFALogin: vi.fn(), getTwoFALogin: vi.fn(), deleteTwoFALogin: vi.fn(),
   startExcelTwoFALogin: vi.fn(), getExcelTwoFALogin: vi.fn(), deleteExcelTwoFALogin: vi.fn(),
 }))
@@ -38,8 +38,8 @@ describe('OpenAI initial 2FA import', () => {
     await start(wrapper, 'a@example.com----p1----s1\nb@example.com----p2----s2')
     expect(importCredential).toHaveBeenCalledTimes(2)
     expect(startTwoFALogin).toHaveBeenCalledTimes(2)
-    expect(wrapper.text()).toContain('tokenGuard.twoFA.states.created')
-    expect(wrapper.text()).toContain('tokenGuard.twoFA.states.importFailed')
+    expect(wrapper.text()).toContain('openaiRelogin.twoFA.states.created')
+    expect(wrapper.text()).toContain('openaiRelogin.twoFA.states.importFailed')
     expect(wrapper.text()).not.toContain('do not display credential')
     expect(wrapper.find('textarea').exists()).toBe(false)
     importCredential.mockResolvedValueOnce('created')
@@ -47,7 +47,7 @@ describe('OpenAI initial 2FA import', () => {
     await flushPromises()
     expect(importCredential).toHaveBeenCalledTimes(3)
     expect(startTwoFALogin).toHaveBeenCalledTimes(2)
-    expect(wrapper.text()).not.toContain('tokenGuard.twoFA.retry')
+    expect(wrapper.text()).not.toContain('openaiRelogin.twoFA.retry')
     expect(importCredential.mock.calls[1]?.[2]).toEqual({ email: 'b@example.com', password: 'p2', mfa_secret: 's2' })
     expect(importCredential.mock.calls[2]?.[2]).toEqual({ email: 'b@example.com', password: 'p2', mfa_secret: 's2' })
     expect(wrapper.emitted('busy')).toEqual([[true], [false], [true], [false]])
@@ -133,7 +133,7 @@ describe('BPS initial 2FA import', () => {
     await flushPromises()
     expect(startExcelTwoFALogin).toHaveBeenCalledTimes(1)
     expect(importCredential).toHaveBeenCalledTimes(2)
-    expect(wrapper.text()).toContain('tokenGuard.twoFA.states.created')
+    expect(wrapper.text()).toContain('openaiRelogin.twoFA.states.created')
   })
 
   it('retires an accepted Excel job when stop races with its POST response', async () => {
@@ -155,15 +155,15 @@ describe('BPS initial 2FA import', () => {
 })
 
 it.each([
-  ['EXCEL_LOGIN_WORKER_PREPARING', undefined, 'tokenGuard.twoFA.failures.workerPreparing'],
-  ['EXCEL_LOGIN_WORKER_UNAVAILABLE', undefined, 'tokenGuard.twoFA.failures.excelWorkerUnavailable'],
+  ['EXCEL_LOGIN_WORKER_PREPARING', undefined, 'openaiRelogin.twoFA.failures.workerPreparing'],
+  ['EXCEL_LOGIN_WORKER_UNAVAILABLE', undefined, 'openaiRelogin.twoFA.failures.excelWorkerUnavailable'],
   ['OPENAI_REAUTH_WORKER_UNAVAILABLE', 'release_required', 'tokenGuardV2.runtimeReasons.release_required'],
   ['OPENAI_REAUTH_WORKER_UNAVAILABLE', 'runtime_install_failed', 'tokenGuardV2.runtimeReasons.runtime_install_failed'],
   ['OPENAI_REAUTH_WORKER_UNAVAILABLE', 'runtime_source_invalid', 'tokenGuardV2.runtimeReasons.runtime_source_invalid'],
-  ['OPENAI_REAUTH_WORKER_UNAVAILABLE', 'PRIVATE_REASON', 'tokenGuard.twoFA.failures.workerUnavailable'],
-  ['EXCEL_LOGIN_PROXY_UNAVAILABLE', undefined, 'tokenGuard.twoFA.failures.proxyUnavailable'],
-  ['PRIVATE_REASON', undefined, 'tokenGuard.twoFA.states.failed'],
-  ['__proto__', undefined, 'tokenGuard.twoFA.states.failed'],
+  ['OPENAI_REAUTH_WORKER_UNAVAILABLE', 'PRIVATE_REASON', 'openaiRelogin.twoFA.failures.workerUnavailable'],
+  ['EXCEL_LOGIN_PROXY_UNAVAILABLE', undefined, 'openaiRelogin.twoFA.failures.proxyUnavailable'],
+  ['PRIVATE_REASON', undefined, 'openaiRelogin.twoFA.states.failed'],
+  ['__proto__', undefined, 'openaiRelogin.twoFA.states.failed'],
 ])('shows a safe actionable failure for %s / %s and clears it after retry', async (reason, workerReason, key) => {
   vi.mocked(startExcelTwoFALogin).mockRejectedValueOnce({
     status: 503, reason, message: 'PRIVATE_PASSWORD PRIVATE_TOTP PRIVATE_TOKEN',
@@ -181,21 +181,21 @@ it.each([
   await wrapper.get('[data-testid="two-fa-start"]').trigger('click')
   await flushPromises()
   expect(wrapper.text()).not.toContain(key)
-  expect(wrapper.text()).toContain('tokenGuard.twoFA.states.created')
+  expect(wrapper.text()).toContain('openaiRelogin.twoFA.states.created')
   expect(importCredential).toHaveBeenCalledTimes(1)
 })
 
 it.each([
-  ['transport_error', 'protocol_connecting', 'tokenGuard.twoFA.excelFailures.transport_error'],
-  ['password_rejected', 'web_login', 'tokenGuard.twoFA.excelFailures.password_rejected'],
-  ['totp_rejected', 'mfa_challenge', 'tokenGuard.twoFA.excelFailures.totp_rejected'],
-  ['runtime_error', 'starting', 'tokenGuard.twoFA.excelFailures.runtime_error'],
-  ['email_verification', 'web_login', 'tokenGuard.twoFA.excelFailures.email_verification'],
-  ['phone_verification', 'web_login', 'tokenGuard.twoFA.excelFailures.phone_verification'],
-  ['interaction_required', 'web_login', 'tokenGuard.twoFA.excelFailures.interaction_required'],
-  ['unexpected_login_step', 'web_login', 'tokenGuard.twoFA.excelFailures.unexpected_login_step'],
-  ['PRIVATE_TOKEN', 'PRIVATE_PASSWORD', 'tokenGuard.twoFA.states.failed'],
-  [undefined, undefined, 'tokenGuard.twoFA.states.failed'],
+  ['transport_error', 'protocol_connecting', 'openaiRelogin.twoFA.excelFailures.transport_error'],
+  ['password_rejected', 'web_login', 'openaiRelogin.twoFA.excelFailures.password_rejected'],
+  ['totp_rejected', 'mfa_challenge', 'openaiRelogin.twoFA.excelFailures.totp_rejected'],
+  ['runtime_error', 'starting', 'openaiRelogin.twoFA.excelFailures.runtime_error'],
+  ['email_verification', 'web_login', 'openaiRelogin.twoFA.excelFailures.email_verification'],
+  ['phone_verification', 'web_login', 'openaiRelogin.twoFA.excelFailures.phone_verification'],
+  ['interaction_required', 'web_login', 'openaiRelogin.twoFA.excelFailures.interaction_required'],
+  ['unexpected_login_step', 'web_login', 'openaiRelogin.twoFA.excelFailures.unexpected_login_step'],
+  ['PRIVATE_TOKEN', 'PRIVATE_PASSWORD', 'openaiRelogin.twoFA.states.failed'],
+  [undefined, undefined, 'openaiRelogin.twoFA.states.failed'],
 ])('shows failed BPS job diagnostics safely (%s)', async (errorCode, errorStage, key) => {
   vi.mocked(startExcelTwoFALogin).mockResolvedValue({ id: 'failed-job', status: 'running' })
   vi.mocked(getExcelTwoFALogin).mockResolvedValue({ id: 'failed-job', status: 'failed', error_code: errorCode, error_stage: errorStage })
@@ -211,6 +211,6 @@ it.each([
   await wrapper.get('[data-testid="two-fa-start"]').trigger('click')
   await flushPromises()
   expect(wrapper.text()).not.toContain(key)
-  expect(wrapper.text()).not.toContain('tokenGuard.twoFA.failureStage')
-  expect(wrapper.text()).toContain('tokenGuard.twoFA.states.created')
+  expect(wrapper.text()).not.toContain('openaiRelogin.twoFA.failureStage')
+  expect(wrapper.text()).toContain('openaiRelogin.twoFA.states.created')
 })

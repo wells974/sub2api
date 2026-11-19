@@ -1,38 +1,38 @@
 <template>
   <div class="space-y-4">
     <CredentialEncryptionSetup @ready="encryptionReady = $event" />
-    <p class="input-hint">{{ t(excelOauth ? 'admin.accounts.oauth.openai.excelAutoHint' : 'tokenGuard.twoFA.hint') }}</p>
-    <a :href="excelOauth ? '/admin/token-guard-v2' : '/admin/token-guard'" target="_blank" rel="noopener noreferrer" class="text-primary-600">
-      {{ t(excelOauth ? 'admin.accounts.oauth.openai.excelAutoSettings' : 'tokenGuard.twoFA.settings') }}
+    <p class="input-hint">{{ t(excelOauth ? 'admin.accounts.oauth.openai.excelAutoHint' : 'openaiRelogin.twoFA.hint') }}</p>
+    <a :href="excelOauth ? '/admin/token-guard-v2' : '/admin/token-guard-v2#relogin-service'" target="_blank" rel="noopener noreferrer" class="text-primary-600">
+      {{ t(excelOauth ? 'admin.accounts.oauth.openai.excelAutoSettings' : 'openaiRelogin.twoFA.settings') }}
     </a>
     <template v-if="!rows.length">
-      <label for="two-fa-credentials" class="input-label">{{ t('tokenGuard.twoFA.credentials') }}</label>
+      <label for="two-fa-credentials" class="input-label">{{ t('openaiRelogin.twoFA.credentials') }}</label>
       <textarea id="two-fa-credentials" v-model="raw" class="input font-mono" rows="6"
         autocomplete="off" autocapitalize="off" :spellcheck="false" :disabled="busy"
-        :placeholder="t('tokenGuard.twoFA.placeholder')" />
+        :placeholder="t('openaiRelogin.twoFA.placeholder')" />
     </template>
     <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
     <p v-if="!busy && hasOwnedJobs" role="status" class="input-hint" data-testid="two-fa-owned-jobs">
-      {{ t('tokenGuard.twoFA.ownedJobs') }}
+      {{ t('openaiRelogin.twoFA.ownedJobs') }}
     </p>
     <ul v-if="rows.length" class="space-y-2" aria-live="polite">
       <li v-for="(row, index) in rows" :key="row.entry.email" class="flex justify-between gap-4 text-sm">
         <span>{{ index + 1 }}. {{ row.entry.email }}</span>
         <span>
-          {{ t(row.failureKey || `tokenGuard.twoFA.states.${row.status}`) }}
-          <span v-if="row.failureStageKey">{{ t('tokenGuard.twoFA.failureStage', { stage: t(row.failureStageKey) }) }}</span>
+          {{ t(row.failureKey || `openaiRelogin.twoFA.states.${row.status}`) }}
+          <span v-if="row.failureStageKey">{{ t('openaiRelogin.twoFA.failureStage', { stage: t(row.failureStageKey) }) }}</span>
         </span>
       </li>
     </ul>
     <div class="flex gap-3">
       <button v-if="!busy && (!rows.length || hasPending)" type="button" class="btn btn-primary" :disabled="!encryptionReady" data-testid="two-fa-start" @click="run">
-        {{ t(rows.length ? 'tokenGuard.twoFA.retry' : 'tokenGuard.twoFA.start') }}
+        {{ t(rows.length ? 'openaiRelogin.twoFA.retry' : 'openaiRelogin.twoFA.start') }}
       </button>
       <button v-if="busy || hasOwnedJobs" type="button" class="btn btn-secondary" :disabled="busy && stopRequested" data-testid="two-fa-stop" @click="stop">
-        {{ t('tokenGuard.twoFA.stop') }}
+        {{ t('openaiRelogin.twoFA.stop') }}
       </button>
       <button v-if="!busy && rows.length" type="button" class="btn btn-secondary" :disabled="hasOwnedJobs" @click="reset">
-        {{ t('tokenGuard.twoFA.reset') }}
+        {{ t('openaiRelogin.twoFA.reset') }}
       </button>
     </div>
   </div>
@@ -42,22 +42,22 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import CredentialEncryptionSetup from './CredentialEncryptionSetup.vue'
 import { useI18n } from 'vue-i18n'
-import { deleteTwoFALogin, getTwoFALogin, parseTwoFALoginText, startTwoFALogin, startExcelTwoFALogin, getExcelTwoFALogin, deleteExcelTwoFALogin } from '@/api/admin/accountTokenGuard'
-import type { TokenGuardReloginAccount } from '@/api/admin/accountTokenGuard'
+import { deleteTwoFALogin, getTwoFALogin, parseTwoFALoginText, startTwoFALogin, startExcelTwoFALogin, getExcelTwoFALogin, deleteExcelTwoFALogin } from '@/api/admin/openaiRelogin'
+import type { OpenAIReloginCredentials } from '@/api/admin/openaiRelogin'
 
 const props = defineProps<{
   excelOauth?: boolean
   proxyId?: number | null
-  importCredential: (credential: Record<string, unknown>, email: string, login: TokenGuardReloginAccount, signal?: AbortSignal) => Promise<'created' | 'skipped'>
+  importCredential: (credential: Record<string, unknown>, email: string, login: OpenAIReloginCredentials, signal?: AbortSignal) => Promise<'created' | 'skipped'>
 }>()
 // Keep job ownership bound to the original queue during parent reset/unmount.
 const loginAPI = props.excelOauth
-  ? { start: (entry: TokenGuardReloginAccount) => startExcelTwoFALogin(entry, props.proxyId), get: getExcelTwoFALogin, delete: deleteExcelTwoFALogin }
+  ? { start: (entry: OpenAIReloginCredentials) => startExcelTwoFALogin(entry, props.proxyId), get: getExcelTwoFALogin, delete: deleteExcelTwoFALogin }
   : { start: startTwoFALogin, get: getTwoFALogin, delete: deleteTwoFALogin }
 const emit = defineEmits<{ busy: [value: boolean] }>()
 const { t } = useI18n()
 type Row = {
-  entry: TokenGuardReloginAccount
+  entry: OpenAIReloginCredentials
   status: 'pending' | 'login' | 'importing' | 'created' | 'skipped' | 'failed' | 'importFailed'
   credential?: Record<string, unknown>
   jobId?: string
@@ -99,7 +99,7 @@ function loginFailureKey(cause: unknown): string | undefined {
     ERR_NETWORK: 'network',
   }
   const key = reason && Object.prototype.hasOwnProperty.call(keys, reason) ? keys[reason] : undefined
-  return key ? `tokenGuard.twoFA.failures.${key}` : undefined
+  return key ? `openaiRelogin.twoFA.failures.${key}` : undefined
 }
 const raw = ref('')
 const encryptionReady = ref(false)
@@ -167,7 +167,7 @@ async function run() {
       rows.value = parseTwoFALoginText(raw.value).map(entry => ({ entry, status: 'pending' }))
       raw.value = ''
     } catch {
-      error.value = t('tokenGuard.twoFA.invalid')
+      error.value = t('openaiRelogin.twoFA.invalid')
       return
     }
   }
@@ -225,10 +225,10 @@ async function runRow(row: Row, signal: AbortSignal) {
       }
       if (job.status !== 'succeeded' || !job.credential) {
         if (props.excelOauth && job.error_code && excelFailureCodes.includes(job.error_code)) {
-          row.failureKey = `tokenGuard.twoFA.excelFailures.${job.error_code}`
+          row.failureKey = `openaiRelogin.twoFA.excelFailures.${job.error_code}`
         }
         if (props.excelOauth && job.error_stage && excelFailureStages.includes(job.error_stage)) {
-          row.failureStageKey = `tokenGuard.twoFA.excelStages.${job.error_stage}`
+          row.failureStageKey = `openaiRelogin.twoFA.excelStages.${job.error_stage}`
         }
         await discardJob(row)
         throw new Error('login_failed')

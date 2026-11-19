@@ -2,10 +2,10 @@ vi.mock('@/components/common/NewFeatureBadge.vue', () => ({ default: { template:
 vi.mock('@/api/admin/upstreamChannels', () => ({ listUpstreamChannels: vi.fn(), readChannelBindings: vi.fn(), bindChannelAccounts: vi.fn() }))
 import { readChannelBindings, listUpstreamChannels } from '@/api/admin/upstreamChannels'
 import UpstreamChannelSelector from '../UpstreamChannelSelector.vue'
-import { deleteTwoFALogin, getTwoFALogin, startTwoFALogin, startExcelTwoFALogin } from '@/api/admin/accountTokenGuard'
+import { deleteTwoFALogin, getTwoFALogin, startTwoFALogin, startExcelTwoFALogin } from '@/api/admin/openaiRelogin'
 
-vi.mock('@/api/admin/accountTokenGuard', async original => ({
-  ...await original<typeof import('@/api/admin/accountTokenGuard')>(),
+vi.mock('@/api/admin/openaiRelogin', async original => ({
+  ...await original<typeof import('@/api/admin/openaiRelogin')>(),
   startExcelTwoFALogin: vi.fn(), startTwoFALogin: vi.fn(), getTwoFALogin: vi.fn(), deleteTwoFALogin: vi.fn(),
 }))
 
@@ -512,6 +512,23 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       platform: 'openai',
       type: 'apikey',
       extra: expect.objectContaining({ openai_response_tier_billing_enabled: true })
+    }))
+  })
+
+  it('offers the cache TTL billing-from-request switch only for Anthropic API-key accounts', async () => {
+    const wrapper = mountModal()
+    expect(wrapper.find('[data-testid="cache-ttl-billing-from-request-toggle"]').exists()).toBe(false)
+    await selectButtonByText(wrapper, 'admin.accounts.claudeConsole')
+    const toggle = wrapper.get('[data-testid="cache-ttl-billing-from-request-toggle"]')
+    expect(toggle.classes()).not.toContain('bg-primary-600')
+    await toggle.trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Relay with TTL billing')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(createAccountMock).toHaveBeenCalledWith(expect.objectContaining({
+      platform: 'anthropic', type: 'apikey',
+      extra: expect.objectContaining({ cache_ttl_billing_from_request: true })
     }))
   })
 
@@ -1080,7 +1097,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       expect(startTwoFALogin).toHaveBeenCalledTimes(3)
       expect(wrapper.getComponent(OpenAITwoFAImport).vm.$.uid).toBe(original.vm.$.uid)
       expect(wrapper.emitted('close')).toBeUndefined()
-      expect(original.get('[data-testid="two-fa-owned-jobs"]').text()).toContain('tokenGuard.twoFA.ownedJobs')
+      expect(original.get('[data-testid="two-fa-owned-jobs"]').text()).toContain('openaiRelogin.twoFA.ownedJobs')
       expect(original.get('[data-testid="two-fa-start"]').attributes('disabled')).toBeUndefined()
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
       await selectButtonByText(wrapper, 'common.back')
@@ -1135,6 +1152,25 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       wrapper.unmount()
       await flushPromises()
     }
+  })
+
+  it('can create a passthrough account with model filtering enabled', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('filtered passthrough')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('synthetic-key')
+    await wrapper.get('[data-testid="create-openai-passthrough-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="create-openai-passthrough-model-filter"]').setValue(true)
+    wrapper.getComponent(ModelWhitelistSelectorStub).vm.$emit('update:modelValue', ['qwen3.8-max'])
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload.extra.openai_passthrough).toBe(true)
+    expect(payload.extra.openai_passthrough_model_filter).toBe(true)
+    expect(payload.credentials.model_mapping).toEqual({ 'qwen3.8-max': 'qwen3.8-max' })
+    wrapper.unmount()
   })
 
   it('sets month and year expiry presets without submitting the account form', async () => {

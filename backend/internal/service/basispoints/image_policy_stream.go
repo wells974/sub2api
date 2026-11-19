@@ -91,7 +91,7 @@ func WithCompactedWindow(ctx context.Context, upstream io.ReadCloser, window []a
 					current = progressiveUsage
 					response["usage"] = current
 				}
-				mergeImageUsage(current, usage)
+				response["usage"] = addRepairUsage(current, usage)
 			}
 			return emit(kind, p)
 		})
@@ -106,41 +106,6 @@ type imagePolicyStream struct {
 }
 
 func (s *imagePolicyStream) Close() error { _ = s.upstream.Close(); return s.PipeReader.Close() }
-func mergeImageUsage(dst, src object) {
-	for k, v := range src {
-		if child, ok := v.(object); ok {
-			target, _ := dst[k].(object)
-			if target == nil {
-				target = object{}
-				dst[k] = target
-			}
-			mergeImageUsage(target, child)
-			continue
-		}
-		var a, b json.Number
-		switch n := v.(type) {
-		case json.Number:
-			b = n
-		case float64:
-			b = json.Number(fmt.Sprint(n))
-		case int:
-			b = json.Number(fmt.Sprint(n))
-		default:
-			continue
-		}
-		switch n := dst[k].(type) {
-		case json.Number:
-			a = n
-		case float64:
-			a = json.Number(fmt.Sprint(n))
-		case int:
-			a = json.Number(fmt.Sprint(n))
-		}
-		x, _ := a.Int64()
-		y, _ := b.Int64()
-		dst[k] = x + y
-	}
-}
 
 // ReadImageCompaction observes reported usage even when no successful terminal
 // arrives. The caller never sees intermediate text or executable tool events.

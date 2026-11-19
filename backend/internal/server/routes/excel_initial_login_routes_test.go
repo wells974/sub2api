@@ -23,6 +23,9 @@ func TestExcelInitialLoginRoutesRequireAuthentication(t *testing.T) {
 		middleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() }),
 		middleware.StepUpAuthMiddleware(func(c *gin.Context) { c.Next() }), nil, nil)
 	for _, endpoint := range []struct{ method, path string }{
+		{"POST", "/admin/account-ops/relogin/initial-excel-login"},
+		{"GET", "/admin/account-ops/relogin/initial-excel-login/1"},
+		{"DELETE", "/admin/account-ops/relogin/initial-excel-login/1"},
 		{"POST", "/admin/account-ops/initial-excel-login"},
 		{"GET", "/admin/account-ops/initial-excel-login/1"},
 		{"DELETE", "/admin/account-ops/initial-excel-login/1"},

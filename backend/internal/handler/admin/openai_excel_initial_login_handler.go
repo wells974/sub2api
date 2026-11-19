@@ -9,18 +9,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (h *OpenAIOAuthReauthHandler) StartExcelInitialLogin(c *gin.Context) {
+func (h *OpenAIReloginHandler) StartExcelInitialLogin(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
 	var input struct {
-		service.AccountTokenGuardReloginAccount
+		service.OpenAIReloginCredentials
 		ProxyID *int64 `json:"proxy_id"`
 	}
 	if c.ShouldBindJSON(&input) != nil {
 		response.BadRequest(c, "Invalid BPS login request")
 		return
 	}
-	job, err := h.service.StartExcelInitialLogin(c.Request.Context(), input.AccountTokenGuardReloginAccount, input.ProxyID)
+	job, err := h.svc.StartExcelInitialLogin(c.Request.Context(), input.OpenAIReloginCredentials, input.ProxyID)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -41,26 +41,26 @@ func excelInitialID(c *gin.Context) (int64, bool) {
 	return id, true
 }
 
-func (h *OpenAIOAuthReauthHandler) GetExcelInitialLogin(c *gin.Context) {
+func (h *OpenAIReloginHandler) GetExcelInitialLogin(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	id, ok := excelInitialID(c)
 	if !ok {
 		return
 	}
-	job, err := h.service.GetExcelInitialLogin(id)
+	job, err := h.reauth.GetExcelInitialLogin(id)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 	response.Success(c, job)
 }
-func (h *OpenAIOAuthReauthHandler) DeleteExcelInitialLogin(c *gin.Context) {
+func (h *OpenAIReloginHandler) DeleteExcelInitialLogin(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	id, ok := excelInitialID(c)
 	if !ok {
 		return
 	}
-	h.service.DeleteExcelInitialLogin(id)
+	h.reauth.DeleteExcelInitialLogin(id)
 	response.Success(c, gin.H{"deleted": true})
 }
 
