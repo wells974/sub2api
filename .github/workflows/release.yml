@@ -217,6 +217,7 @@ jobs:
       - name: Build and validate portable re-login runtime
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
           ARCH: ${{ matrix.arch }}
         run: bash tools/reauth-runtime/build.sh
       - uses: actions/upload-artifact@v7

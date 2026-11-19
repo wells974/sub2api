@@ -186,6 +186,10 @@ for arg do
 done
 ''')
         docker.chmod(0o755)
+        subprocess.run(['git', 'init', '-q'], check=True)
+        subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.test',
+                        'commit', '--allow-empty', '-qm', 'fixture'], check=True)
+        sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
         for version in ('2.19.9', '2.19.9.1', '2.19.9.1-rc.1'):
             for arch in ('amd64', 'arm64'):
                 with self.subTest(version=version, arch=arch):
@@ -193,15 +197,23 @@ done
                     directory.mkdir()
                     log = directory.resolve() / 'docker.log'
                     env = {**os.environ, 'PATH': str(fake_bin.resolve()) + os.pathsep + os.environ['PATH'],
-                           'VERSION': version, 'ARCH': arch, 'DOCKER_LOG': str(log)}
+                           'VERSION': version, 'ARCH': arch, 'DOCKER_LOG': str(log), 'RELEASE_SHA': sha}
                     result = subprocess.run(['bash', str(ROOT / 'tools/reauth-runtime/build.sh')],
                                             cwd=directory, env=env, text=True, capture_output=True)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     archive = directory / f'reauth-output/sub2api-reauth_{version}_linux_{arch}.tar.gz'
                     with tarfile.open(archive) as package:
                         self.assertEqual(package.extractfile('./worker.py').read(), b'fixture worker')
+                        self.assertEqual(json.load(package.extractfile('./release-source.json')),
+                                         {'version': version, 'commit': sha})
                     self.assertIn(release.sha256(archive), result.stdout)
                     self.assertIn(f'--platform linux/{arch}', log.read_text())
+        log.unlink()
+        result = subprocess.run(['bash', str(ROOT / 'tools/reauth-runtime/build.sh')], cwd=directory,
+                                env={**env, 'RELEASE_SHA': '0' * 40}, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('checkout does not match', result.stderr)
+        self.assertFalse(log.exists())
 
     def test_reauth_runtime_build_rejects_invalid_versions_before_docker(self):
         for version in ('2.19', '2.19.9.1.2', '2.19.9.', '../2.19.9.1'):
