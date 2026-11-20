@@ -924,6 +924,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(wrapper.get('[data-tour="account-form-name"]').attributes('required')).toBeUndefined()
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     const importer = wrapper.getComponent(OpenAITwoFAImport)
+    expect(wrapper.get<HTMLInputElement>('[data-testid="sync-models-on-create"]').element.checked).toBe(false)
     expect(wrapper.findComponent(OAuthAuthorizationFlowStub).exists()).toBe(false)
     const credential = { access_token: 'test-access', refresh_token: 'test-refresh', account_id: 'test-workspace' }
     const login = { email: 'user@example.com', password: 'test-password', mfa_secret: 'test-secret' }
@@ -934,10 +935,65 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     }))
     expect(wrapper.emitted('created')).toHaveLength(1)
     expect(wrapper.emitted('close')).toBeUndefined()
+    expect(syncUpstreamModelsMock).not.toHaveBeenCalled()
     expect(createCredentialOperationsMock).toHaveBeenCalledWith({
       account_id: 42, login_email: login.email, password: login.password, totp_secret: login.mfa_secret,
       credential_mode: 'password_totp', proxy_source: 'account', enabled: true, auto_relogin_enabled: true,
     })
+  })
+
+  it('retries only model sync for a new 2FA account and skips an existing account in the batch', async () => {
+    vi.mocked(startTwoFALogin).mockReset().mockImplementation(async entry => ({ id: entry.email, status: 'running' }))
+    vi.mocked(getTwoFALogin).mockResolvedValue({ id: 'job', status: 'succeeded', credential: { access_token: 'fixture' } })
+    vi.mocked(deleteTwoFALogin).mockResolvedValue(undefined)
+    importCodexSessionMock.mockImplementation(async request => request.name === 'new@example.com'
+      ? { created: 1, failed: 0, items: [{ action: 'created', account_id: 42 }] }
+      : { created: 0, skipped: 1, failed: 0, items: [{ action: 'skipped', account_id: 43 }] })
+    syncUpstreamModelsMock.mockRejectedValueOnce(Error('upstream unavailable'))
+      .mockResolvedValueOnce({ applied: true, models: ['model-a'] })
+
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-testid="openai-two-fa"]').trigger('click')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await wrapper.get('[data-testid="sync-models-on-create"]').setValue(true)
+    const importer = wrapper.getComponent(OpenAITwoFAImport)
+    await importer.get('textarea').setValue('new@example.com----p----s\nexisting@example.com----p----s')
+    await importer.get('[data-testid="two-fa-start"]').trigger('click')
+    await flushPromises()
+
+    const [created, existing] = importer.findAll('li')
+    expect(created.text()).toContain('openaiRelogin.twoFA.states.created')
+    expect(created.text()).toContain('admin.accounts.newModelSync.failed')
+    expect(existing.text()).toContain('openaiRelogin.twoFA.states.skipped')
+    expect(existing.find('button').exists()).toBe(false)
+    await created.get('button').trigger('click')
+    await flushPromises()
+    expect(created.text()).toContain('admin.accounts.newModelSync.saved')
+    expect(syncUpstreamModelsMock.mock.calls.map(([id]) => id)).toEqual([42, 42])
+    expect(startTwoFALogin).toHaveBeenCalledTimes(2)
+    expect(importCodexSessionMock).toHaveBeenCalledTimes(2)
+    expect(createCredentialOperationsMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows the protected-policy outcome for a newly created OAuth account and resets the opt-in on reopen', async () => {
+    syncUpstreamModelsMock.mockResolvedValue({ skipped: 'account_policy', models: [] })
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-tour="account-form-name"]').setValue('Codex')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await wrapper.get('[data-testid="sync-models-on-create"]').setValue(true)
+    wrapper.getComponent(OAuthAuthorizationFlowStub).vm.$emit('validate-refresh-token', 'fixture')
+    await flushPromises()
+    expect(syncUpstreamModelsMock).toHaveBeenCalledWith(42, { apply: true }, expect.any(Object))
+    expect(wrapper.text()).toContain('admin.accounts.newModelSync.policy')
+    expect(wrapper.findComponent(OAuthAuthorizationFlowStub).exists()).toBe(false)
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-tour="account-form-name"]').setValue('Codex')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="sync-models-on-create"]').element.checked).toBe(false)
   })
 
   it('creates an independent BPS account with automatic 2FA and does not enroll Codex re-login', async () => {

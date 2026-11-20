@@ -1,16 +1,16 @@
 <template>
   <BaseDialog
     :show="show"
-    :title="t('admin.accounts.createAccount')"
+    :title="t(modelSyncComplete ? 'admin.accounts.accountCreated' : 'admin.accounts.createAccount')"
     width="wide"
-    @close="handleClose"
+    @close="!modelSyncLoginBusy && handleClose()"
   >
-    <div v-if="show" class="mb-4 space-y-2">
+    <div v-if="show && !modelSyncComplete" class="mb-4 space-y-2">
       <UpstreamChannelSelector v-model="initialChannelId" @update:model-value="initialChannelConfirmed = false" />
       <label v-if="initialChannelId > 0" class="flex gap-2 text-sm"><input v-model="initialChannelConfirmed" type="checkbox" data-testid="confirm-create-channel" />{{ t('upstreamEntities.confirmCreate') }}</label>
     </div>
     <!-- Step Indicator for OAuth accounts -->
-    <div v-if="isOAuthFlow" class="mb-6 flex items-center justify-center">
+    <div v-if="isOAuthFlow && !modelSyncComplete" class="mb-6 flex items-center justify-center">
       <div class="flex items-center space-x-4">
         <div class="flex items-center">
           <div
@@ -4023,8 +4023,16 @@
     </form>
 
     <!-- Step 2: OAuth Authorization -->
-    <div v-else class="space-y-5">
-      <OpenAITwoFAImport v-if="usesTwoFALogin" :excel-oauth="isOpenAIBPSOAuth" :proxy-id="form.proxy_id" :import-credential="importTwoFACredential" @busy="twoFABusy = $event" />
+    <div v-else-if="!modelSyncComplete" class="space-y-5">
+      <label v-if="showNewModelSyncOption" class="flex items-center gap-2 text-sm">
+        <input v-model="syncModelsOnCreate" type="checkbox" data-testid="sync-models-on-create" :disabled="twoFABusy || modelSyncLoginBusy || currentOAuthLoading" />
+        {{ t('admin.accounts.newModelSync.enable') }}
+      </label>
+      <OpenAITwoFAImport v-if="usesTwoFALogin" :excel-oauth="isOpenAIBPSOAuth" :proxy-id="form.proxy_id" :import-credential="importTwoFACredential" @busy="twoFABusy = $event" @reset="modelSyncResults = []">
+        <template #model-sync="{ email }">
+          <NewAccountModelSyncResult v-for="row in modelSyncResults.filter(item => item.name === email)" :key="row.id" :result="row" @retry="retryModelSync" />
+        </template>
+      </OpenAITwoFAImport>
       <OAuthAuthorizationFlow
         v-else
         ref="oauthFlowRef"
@@ -4032,7 +4040,8 @@
         :excel-oauth="isOpenAIBPSOAuth"
         :auth-url="currentAuthUrl"
         :session-id="currentSessionId"
-        :loading="currentOAuthLoading"
+        :loading="currentOAuthLoading || modelSyncLoginBusy"
+        :inert="modelSyncLoginBusy || undefined"
         :error="currentOAuthError"
         :show-help="form.platform === 'anthropic'"
         :show-proxy-warning="form.platform !== 'openai' && form.platform !== 'grok' && !!form.proxy_id"
@@ -4064,8 +4073,18 @@
 
     </div>
 
+    <ul v-if="!usesTwoFALogin && modelSyncResults.length" class="space-y-2">
+      <li v-for="row in modelSyncResults" :key="row.id" class="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <span>{{ row.name }} · #{{ row.id }}</span>
+        <NewAccountModelSyncResult :result="row" @retry="retryModelSync" />
+      </li>
+    </ul>
+
     <template #footer>
-      <div v-if="step === 1" class="flex justify-end gap-3">
+      <div v-if="modelSyncComplete" class="flex justify-end">
+        <button type="button" class="btn btn-primary" @click="handleClose">{{ t('common.close') }}</button>
+      </div>
+      <div v-else-if="step === 1" class="flex justify-end gap-3">
         <button @click="handleClose" type="button" class="btn btn-secondary">
           {{ t('common.cancel') }}
         </button>
@@ -4106,13 +4125,13 @@
         </button>
       </div>
       <div v-else class="flex justify-between gap-3">
-        <button type="button" class="btn btn-secondary" :disabled="twoFABusy" @click="usesTwoFALogin ? handleClose() : goBackToBasicInfo()">
+        <button type="button" class="btn btn-secondary" :disabled="twoFABusy || modelSyncLoginBusy" @click="usesTwoFALogin ? handleClose() : goBackToBasicInfo()">
           {{ t('common.back') }}
         </button>
         <button
           v-if="!usesTwoFALogin && isManualInputMethod"
           type="button"
-          :disabled="!canExchangeCode"
+          :disabled="!canExchangeCode || modelSyncLoginBusy"
           class="btn btn-primary"
           @click="handleExchangeCode"
         >
@@ -4386,6 +4405,8 @@ import { parseExtraImageModels } from '@/utils/extraImageModels'
 import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier } from '@/utils/accountCost'
 
 import OpenAITwoFAImport from './OpenAITwoFAImport.vue'
+import NewAccountModelSyncResult from './NewAccountModelSyncResult.vue'
+import { useNewAccountModelSync } from '@/composables/useNewAccountModelSync'
 import { createTokenGuardV2Account } from '@/api/admin/accountTokenGuardV2'
 import type { OpenAIReloginCredentials } from '@/api/admin/openaiRelogin'
 import { ref, reactive, computed, watch } from 'vue'
@@ -4622,6 +4643,7 @@ const emit = defineEmits<{
   close: []
   'retry-proxies': []
   created: []
+  'models-synced': []
 }>()
 
 const appStore = useAppStore()
@@ -4694,6 +4716,19 @@ interface TempUnschedRuleForm {
 
 // State
 const step = ref(1)
+const syncModelsOnCreate = ref(false)
+const modelSyncComplete = ref(false)
+const { results: modelSyncResults, syncCreated, retry: retryModelSync } = useNewAccountModelSync(() => emit('models-synced'))
+const showNewModelSyncOption = computed(() => form.platform === 'openai' &&
+  !['agent_identity', 'codex_pat'].includes(oauthFlowRef.value?.inputMethod ?? ''))
+
+const modelSyncLoginBusy = ref(false)
+
+function finishOpenAICreation() {
+  emit('created')
+  if (modelSyncResults.value.length) modelSyncComplete.value = true
+  else handleClose()
+}
 const openaiTwoFA = ref(false)
 const openaiBPSOAuth = ref(false)
 const bpsOAuthModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
@@ -6124,6 +6159,9 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 
 // Methods
 const resetForm = () => {
+  syncModelsOnCreate.value = false
+  modelSyncComplete.value = false
+  modelSyncResults.value = []
   qwenSessionCache.value = false
   qwenStrictAffinity.value = false
   initialChannelId.value = 0
@@ -6273,7 +6311,7 @@ const resetForm = () => {
 }
 
 const handleClose = () => {
-  if (twoFABusy.value) return
+  if (twoFABusy.value || modelSyncResults.value.some(row => row.state === 'syncing')) return
   antigravityMixedChannelConfirmed.value = false
   clearMixedChannelDialog()
   emit('close')
@@ -7287,11 +7325,13 @@ const createdImportAccountIds = (result: CodexSessionImportResult) =>
 
 // OpenAI OAuth 授权码兑换
 const handleOpenAIExchange = async (authCode: string) => {
+  if (modelSyncLoginBusy.value) return
   const oauthClient = openaiOAuth
   if (!authCode.trim() || !oauthClient.sessionId.value) return
   if (!validateOpenAIAuthorizationProxy()) return
   if (!validateOpenAIRequestProxies()) return
 
+  modelSyncLoginBusy.value = syncModelsOnCreate.value
   oauthClient.loading.value = true
   oauthClient.error.value = ''
 
@@ -7357,15 +7397,16 @@ const handleOpenAIExchange = async (authCode: string) => {
         auto_pause_on_expired: autoPauseOnExpired.value
       })
       appStore.showSuccess(t('admin.accounts.accountCreated'))
+      if (syncModelsOnCreate.value) await syncCreated(account.id, form.name)
       await createAutoBPSRules([account.id])
     }
 
-    emit('created')
-    handleClose()
+    finishOpenAICreation()
   } catch (error: any) {
     oauthClient.error.value = error.response?.data?.detail || t('admin.accounts.oauth.authFailed')
     appStore.showError(oauthClient.error.value)
   } finally {
+    modelSyncLoginBusy.value = false
     oauthClient.loading.value = false
   }
 }
@@ -7475,7 +7516,11 @@ const importTwoFACredential = async (credential: Record<string, unknown>, email:
   signal?.throwIfAborted()
   if (result.failed > 0) throw new Error('import_failed')
   if (result.created > 0) {
-    await createAutoBPSRules(createdImportAccountIds(result), signal)
+    const ids = createdImportAccountIds(result)
+    if (syncModelsOnCreate.value) {
+      for (const id of ids) await syncCreated(id, email, signal)
+    }
+    await createAutoBPSRules(ids, signal)
   }
   const accountIds = [...new Set((result.items ?? [])
     .filter(item => item.action === 'created' || item.action === 'skipped')
@@ -7504,6 +7549,7 @@ const importTwoFACredential = async (credential: Record<string, unknown>, email:
 }
 
 const handleOpenAIImportCodexSession = async (content: string) => {
+  if (modelSyncLoginBusy.value) return
   const oauthClient = openaiOAuth
   const trimmed = content.trim()
   if (!trimmed) {
@@ -7526,6 +7572,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
     return
   }
 
+  modelSyncLoginBusy.value = syncModelsOnCreate.value
   oauthClient.loading.value = true
   oauthClient.error.value = ''
 
@@ -7549,6 +7596,11 @@ const handleOpenAIImportCodexSession = async (content: string) => {
     })
     // 只给这次新建的账号建规则；已有账号被更新时不动它原有的规则。
     const createdIds = createdImportAccountIds(result)
+    if (syncModelsOnCreate.value && showNewModelSyncOption.value && !isAgentIdentityImportContent(trimmed)) {
+      for (const item of result.items ?? []) {
+        if (item.action === 'created' && item.account_id) await syncCreated(item.account_id, item.name || form.name)
+      }
+    }
     if (createdIds.length > 0 && isAgentIdentityImportContent(trimmed)) skipAutoBPSRules()
     else await createAutoBPSRules(createdIds)
 
@@ -7562,8 +7614,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
 
     if (successCount > 0 && result.failed === 0) {
       appStore.showSuccess(t('admin.accounts.oauth.openai.codexSessionImportSuccess', params))
-      emit('created')
-      handleClose()
+      finishOpenAICreation()
       return
     }
 
@@ -7591,6 +7642,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
       t('admin.accounts.oauth.openai.codexSessionImportFailed')
     appStore.showError(oauthClient.error.value)
   } finally {
+    modelSyncLoginBusy.value = false
     oauthClient.loading.value = false
   }
 }
@@ -7651,6 +7703,7 @@ const handleOpenAIImportCodexPAT = async (accessToken: string) => {
 
 // OpenAI RT 批量验证和创建（共享逻辑）
 const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string) => {
+  if (modelSyncLoginBusy.value) return
   const oauthClient = openaiOAuth
   if (!refreshTokenInput.trim()) return
   if (!validateOpenAIRequestProxies()) return
@@ -7665,6 +7718,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
     return
   }
 
+  modelSyncLoginBusy.value = syncModelsOnCreate.value
   oauthClient.loading.value = true
   oauthClient.error.value = ''
 
@@ -7733,6 +7787,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             auto_pause_on_expired: autoPauseOnExpired.value
           })
           createdIds.push(account.id)
+          if (syncModelsOnCreate.value) await syncCreated(account.id, accountName)
         }
 
         successCount++
@@ -7752,8 +7807,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
           ? t('admin.accounts.oauth.batchSuccess', { count: successCount })
           : t('admin.accounts.accountCreated')
       )
-      emit('created')
-      handleClose()
+      finishOpenAICreation()
     } else if (successCount > 0 && failedCount > 0) {
       appStore.showWarning(
         t('admin.accounts.oauth.batchPartialSuccess', { success: successCount, failed: failedCount })
@@ -7765,6 +7819,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
       appStore.showError(t('admin.accounts.oauth.batchFailed'))
     }
   } finally {
+    modelSyncLoginBusy.value = false
     oauthClient.loading.value = false
   }
 }

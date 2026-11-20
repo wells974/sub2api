@@ -20,6 +20,7 @@
         <span>{{ index + 1 }}. {{ row.entry.email }}</span>
         <span>
           {{ t(row.failureKey || `openaiRelogin.twoFA.states.${row.status}`) }}
+          <slot name="model-sync" :email="row.entry.email" />
           <span v-if="row.failureStageKey">{{ t('openaiRelogin.twoFA.failureStage', { stage: t(row.failureStageKey) }) }}</span>
         </span>
       </li>
@@ -54,7 +55,7 @@ const props = defineProps<{
 const loginAPI = props.excelOauth
   ? { start: (entry: OpenAIReloginCredentials) => startExcelTwoFALogin(entry, props.proxyId), get: getExcelTwoFALogin, delete: deleteExcelTwoFALogin }
   : { start: startTwoFALogin, get: getTwoFALogin, delete: deleteTwoFALogin }
-const emit = defineEmits<{ busy: [value: boolean] }>()
+const emit = defineEmits<{ busy: [value: boolean]; reset: [] }>()
 const { t } = useI18n()
 type Row = {
   entry: OpenAIReloginCredentials
@@ -271,6 +272,7 @@ function reset() {
   if (!disposed && (busy.value || hasOwnedJobs.value)) return
   for (const row of rows.value) void discardJob(row).catch(() => {})
   rows.value = []
+  if (!disposed) emit('reset')
   raw.value = ''
   error.value = ''
 }

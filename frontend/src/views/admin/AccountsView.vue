@@ -514,7 +514,7 @@
       <template #pagination><Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" /></template>
     </TablePageLayout>
     <NewAPIUpstreamConfigDialog v-if="authStore.isAdmin" :show="newAPIConfigAccount !== null" :account="newAPIConfigAccount" @close="newAPIConfigAccount = null" @saved="reload" />
-    <CreateAccountModal :show="showCreate" :proxies="proxies" :proxies-loading="proxiesLoading" :proxies-load-error="proxiesLoadError" :groups="groups" @retry-proxies="loadProxyCatalog" @close="showCreate = false" @created="reload" />
+    <CreateAccountModal :show="showCreate" :proxies="proxies" :proxies-loading="proxiesLoading" :proxies-load-error="proxiesLoadError" :groups="groups" @retry-proxies="loadProxyCatalog" @close="showCreate = false" @created="reload" @models-synced="reload" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :proxies-loading="proxiesLoading" :proxies-load-error="proxiesLoadError" :groups="groups" @retry-proxies="loadProxyCatalog" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" @tested="reload" />
