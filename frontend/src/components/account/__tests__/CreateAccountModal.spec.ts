@@ -747,6 +747,8 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await wrapper.get('[data-testid="openai-bps-oauth"]').trigger('click')
     expect(wrapper.find('[data-testid="bps-oauth-models"]').exists()).toBe(true)
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await wrapper.get('[data-testid="sync-models-on-create"]').setValue(true)
+    syncUpstreamModelsMock.mockResolvedValueOnce({ skipped: 'throttled', models: [] })
     const flow = wrapper.getComponent(OAuthAuthorizationFlowStub)
     flow.vm.$emit('generate-url')
     await flushPromises()
@@ -762,6 +764,8 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       credentials: { access_token: 'excel-at', refresh_token: 'excel-rt', client_id: 'app_fnr0pYvVwwFDocDumLG3H2Bp' },
       extra: { openai_excel_bps: true, openai_excel_bps_models: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra'] }
     })
+    expect(syncUpstreamModelsMock.mock.calls.map(([id]) => id)).toEqual([42])
+    expect(wrapper.text()).toContain('admin.accounts.newModelSync.throttled')
   })
 
   it.each([0, 1, 2].flatMap(clicks => [
@@ -971,6 +975,9 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await flushPromises()
     expect(created.text()).toContain('admin.accounts.newModelSync.saved')
     expect(syncUpstreamModelsMock.mock.calls.map(([id]) => id)).toEqual([42, 42])
+    expect(syncUpstreamModelsMock.mock.calls.map(([, options]) => options)).toEqual([
+      { apply: true, after_create: true }, { apply: true },
+    ])
     expect(startTwoFALogin).toHaveBeenCalledTimes(2)
     expect(importCodexSessionMock).toHaveBeenCalledTimes(2)
     expect(createCredentialOperationsMock).toHaveBeenCalledTimes(2)
@@ -985,7 +992,8 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await wrapper.get('[data-testid="sync-models-on-create"]').setValue(true)
     wrapper.getComponent(OAuthAuthorizationFlowStub).vm.$emit('validate-refresh-token', 'fixture')
     await flushPromises()
-    expect(syncUpstreamModelsMock).toHaveBeenCalledWith(42, { apply: true }, expect.any(Object))
+    expect(syncUpstreamModelsMock).toHaveBeenCalledWith(42, { apply: true, after_create: true }, expect.any(Object))
+    expect(syncUpstreamModelsMock).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('admin.accounts.newModelSync.policy')
     expect(wrapper.findComponent(OAuthAuthorizationFlowStub).exists()).toBe(false)
     await wrapper.setProps({ show: false })
@@ -1003,6 +1011,8 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await wrapper.get('[data-testid="bps-login-two-fa"]').setValue()
     expect(wrapper.get('[data-tour="account-form-name"]').attributes('required')).toBeUndefined()
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await wrapper.get('[data-testid="sync-models-on-create"]').setValue(true)
+    syncUpstreamModelsMock.mockResolvedValue({ applied: true, models: ['model-a'] })
     const importer = wrapper.getComponent(OpenAITwoFAImport)
     expect(importer.props('excelOauth')).toBe(true)
     expect(wrapper.findComponent(OAuthAuthorizationFlowStub).exists()).toBe(false)
@@ -1021,6 +1031,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await expect(importer.props('importCredential')(credential, login.email, login)).resolves.toBe('skipped')
     await expect(importer.props('importCredential')({ ...credential, client_id: 'codex' }, login.email, login)).rejects.toThrow('invalid_excel_credentials')
     expect(importCodexSessionMock).toHaveBeenCalledTimes(2)
+    expect(syncUpstreamModelsMock.mock.calls.map(([id]) => id)).toEqual([42])
     expect(wrapper.emitted('created')).toHaveLength(1)
   })
 
@@ -1737,7 +1748,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     const labels = (testid: string) =>
       wrapper.get(`[data-testid="${testid}"]`).findAll('button').map(button => button.text().trim())
     expect(labels('platform-row-cn')).toEqual(['Kimi', 'Zhipu GLM', 'DeepSeek', 'MiniMax'])
-    expect(labels('platform-row-aggregators')).toEqual(['OpenCode', 'Command Code', 'Cline', 'Mistral', 'Qwen'])
+    expect(labels('platform-row-aggregators')).toEqual(['OpenCode', 'Sub2API / New API', 'Command Code', 'Cline', 'Mistral', 'Qwen'])
   })
 
   it('creates a Cline account without an account type and with only the Chat Completions endpoint', async () => {
@@ -2274,4 +2285,23 @@ describe('mature provider import entry', () => {
     await selectButtonByText(w, 'API Key')
     expect(w.find('[data-testid="provider-import-mode"]').exists(), 'API Key and Responses accounts must offer provider import').toBe(true)
   })
+})
+
+it('creates a cross-platform gateway with the selected provider and one calling key', async () => {
+  const wrapper = mountModal()
+  await wrapper.get('[data-testid="platform-button-gateway"]').trigger('click')
+  await wrapper.get('[data-tour="account-form-name"]').setValue('fixture gateway')
+  const fields = wrapper.get('[data-testid="gateway-account-fields"]')
+  await fields.get('select').setValue('new_api')
+  await fields.get('input[type="url"]').setValue('https://relay.example.com')
+  await fields.get('input[type="password"]').setValue('fixture-only')
+  await wrapper.get('#create-account-form').trigger('submit.prevent')
+  await flushPromises()
+  expect(createAccountMock).toHaveBeenCalledWith(expect.objectContaining({
+    platform: 'gateway',
+    type: 'gateway',
+    credentials: expect.objectContaining({
+      upstream_kind: 'new_api', base_url: 'https://relay.example.com', api_key: 'fixture-only'
+    })
+  }))
 })

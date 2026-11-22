@@ -519,12 +519,7 @@ func restoreClientToolValue(value any, adapter *ResponsesClientToolMapping) bool
 				delete(typed, "namespace")
 				changed = true
 			} else if adapter.ToolSearch && name == toolSearchProxyName {
-				typed["type"] = "tool_search_call"
-				retypeResponsesToolCallItemID(typed, "tool_search_call")
-				typed["execution"] = "client"
-				typed["arguments"] = json.RawMessage(toolSearchCallArgumentsJSON(rawObjectString(typed["arguments"])))
-				delete(typed, "name")
-				delete(typed, "namespace")
+				RestoreClientToolSearchCall(typed)
 				changed = true
 			}
 		}
@@ -533,6 +528,16 @@ func restoreClientToolValue(value any, adapter *ResponsesClientToolMapping) bool
 		}
 	}
 	return changed
+}
+
+// RestoreClientToolSearchCall restores one validated, lowered function call to the Responses wire format.
+func RestoreClientToolSearchCall(item map[string]any) {
+	item["type"] = "tool_search_call"
+	retypeResponsesToolCallItemID(item, "tool_search_call")
+	item["execution"] = "client"
+	item["arguments"] = json.RawMessage(toolSearchCallArgumentsJSON(rawObjectString(item["arguments"])))
+	delete(item, "name")
+	delete(item, "namespace")
 }
 
 // ResponsesClientToolStreamRestorer restores client tool stream lifecycles.

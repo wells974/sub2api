@@ -119,6 +119,13 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 			return nil
 		}
 		emitted[id] = true
+		if item["type"] == "tool_search_call" {
+			added := object{"type": "tool_search_call", "id": id, "call_id": item["call_id"], "execution": "client", "status": "in_progress", "arguments": object{}}
+			if err := emit("response.output_item.added", object{"output_index": index, "item": added}); err != nil {
+				return err
+			}
+			return emit("response.output_item.done", object{"output_index": index, "item": item})
+		}
 		field, prefix := "arguments", "response.function_call_arguments"
 		if text(item["type"]) == "custom_tool_call" {
 			field, prefix = "input", "response.custom_tool_call_input"
@@ -272,7 +279,7 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 				output, _ = response["output"].([]any)
 				for i, raw := range output {
 					item, _ := raw.(object)
-					if isTool(item) {
+					if isTool(item) || item["type"] == "tool_search_call" {
 						if err := emitTool(item, i); err != nil {
 							return err
 						}

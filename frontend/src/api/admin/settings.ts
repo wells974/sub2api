@@ -1,3 +1,4 @@
+import type { PlazaCurrencySettings } from '@/api/modelPlaza';
 /**
  * Admin Settings API endpoints
  * Handles system settings management for administrators
@@ -777,6 +778,8 @@ export interface SystemSettings {
   model_plaza_enabled: boolean;
   model_plaza_require_auth: boolean;
   model_plaza_description: string;
+  model_plaza_usd_to_cny_rate?: number;
+  model_plaza_currency?: PlazaCurrencySettings;
   plugin_management_enabled: boolean;
 
   // Support tickets (网站工单) switch + form config
@@ -1139,6 +1142,8 @@ export interface UpdateSettingsRequest {
   model_plaza_enabled?: boolean;
   model_plaza_require_auth?: boolean;
   model_plaza_description?: string;
+  model_plaza_usd_to_cny_rate?: number;
+  model_plaza_currency?: PlazaCurrencySettings;
   plugin_management_enabled?: boolean;
 
   // Support tickets (网站工单) switch + form config
@@ -1682,7 +1687,7 @@ export async function updateBetaPolicySettings(
 // --- Web Search Emulation Config ---
 
 export interface WebSearchProviderConfig {
-  type: "brave" | "tavily" | "deepseek";
+  type: "brave" | "tavily" | "deepseek" | "exa";
   api_key: string;
   api_key_configured: boolean;
   quota_limit: number | null;

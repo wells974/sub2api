@@ -24,22 +24,34 @@ func TestAutomaticModelSyncClaimIsSharedAndSurvivesStaleAccountEdit(t *testing.T
 	stale, err := repo.GetByID(ctx, account.ID)
 	require.NoError(t, err)
 	now := time.Now().UTC().Truncate(time.Second)
-	claimed, err := repo.ClaimAutomaticUpstreamModelSync(ctx, account.ID, now, now.Add(5*time.Minute))
+	claimed, err := repo.ClaimUpstreamModelSyncWindow(ctx, account.ID, now, now.Add(5*time.Minute), true)
 	require.NoError(t, err)
 	require.True(t, claimed)
-	claimed, err = otherInstance.ClaimAutomaticUpstreamModelSync(ctx, account.ID, now.Add(time.Minute), now.Add(6*time.Minute))
+	claimed, err = otherInstance.ClaimUpstreamModelSyncWindow(ctx, account.ID, now.Add(time.Minute), now.Add(6*time.Minute), true)
 	require.NoError(t, err)
 	require.False(t, claimed, "a different application instance must observe the same attempt window")
 
 	stale.Name = "edited-after-attempt"
 	stale.Extra = map[string]any{"note": "from-stale-form", service.UpstreamModelSyncExtraKey: map[string]any{"next_attempt_unix": 0}}
 	require.NoError(t, repo.Update(ctx, stale))
-	claimed, err = otherInstance.ClaimAutomaticUpstreamModelSync(ctx, account.ID, now.Add(2*time.Minute), now.Add(7*time.Minute))
+	claimed, err = otherInstance.ClaimUpstreamModelSyncWindow(ctx, account.ID, now.Add(2*time.Minute), now.Add(7*time.Minute), true)
 	require.NoError(t, err)
 	require.False(t, claimed, "ordinary edits cannot reset or forge the service-owned attempt window")
-	claimed, err = otherInstance.ClaimAutomaticUpstreamModelSync(ctx, account.ID, now.Add(5*time.Minute), now.Add(10*time.Minute))
+	claimed, err = otherInstance.ClaimUpstreamModelSyncWindow(ctx, account.ID, now.Add(5*time.Minute), now.Add(10*time.Minute), true)
 	require.NoError(t, err)
 	require.True(t, claimed)
+
+	require.NoError(t, tx.Client().Account.UpdateOneID(account.ID).SetSchedulable(false).Exec(ctx))
+	start, next := now.Add(10*time.Minute), now.Add(15*time.Minute)
+	claimed, err = repo.ClaimUpstreamModelSyncWindow(ctx, account.ID, start, next, true)
+	require.NoError(t, err)
+	require.False(t, claimed, "background polling requires a schedulable account")
+	claimed, err = repo.ClaimUpstreamModelSyncWindow(ctx, account.ID, start, next, false)
+	require.NoError(t, err)
+	require.True(t, claimed, "an administrator may sync a newly created account before enabling it")
+	claimed, err = otherInstance.ClaimUpstreamModelSyncWindow(ctx, account.ID, start, next, false)
+	require.NoError(t, err)
+	require.False(t, claimed)
 }
 
 func TestApplyUpstreamModelsPreservesCredentialsAndInvalidatesScheduler(t *testing.T) {

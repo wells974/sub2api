@@ -181,6 +181,9 @@ func openAIWSCompletedToolInputs(body []byte) bool {
 // Called before fresh admission/moderation of an unsent frame. Lookup is scoped
 // to this exact task; missing historical intent is never fabricated.
 func (s *OpenAIGatewayService) RebuildOpenAIWSUnsentTurn(ctx context.Context, c *gin.Context, body []byte, session, model string) (nextCtx context.Context, nextBody []byte, changed bool, resultErr error) {
+	if s.openAILegacyCompatibility() {
+		return ctx, body, false, nil
+	}
 	originalBody := body
 	unsent, _ := ctx.Value(openAIWSUnsentAdmissionKey{}).(*openAIWSUnsentTurnError)
 	ctx = context.WithValue(ctx, openAIWSUnsentAdmissionKey{}, (*openAIWSUnsentTurnError)(nil))
@@ -288,6 +291,7 @@ func (s *OpenAIGatewayService) RebuildOpenAIWSUnsentTurn(ctx context.Context, c 
 		next = WithOpenAIEncryptedReasoningAffinity(next, clean)
 		r.omittedHistory, r.omittedSource = true, nil
 		r.inputDigest, r.replayControlsDigest = openAIAgentRecoveryInputDigest(clean), openAI409ControlsDigest(clean)
+		r.controlFingerprints = openAI409FingerprintControls(clean)
 		return next, clean, true, nil
 	}
 	next, clean, changed, err := s.TryRebuildOpenAI409History(next, c, body, session, model, openAIAgentRecoveryError("owner_unavailable"))

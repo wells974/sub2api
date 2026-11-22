@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -235,6 +238,9 @@ func (b *Bridge) collectToolsAt(value any, namespace, path string, single bool) 
 			catalog = append(catalog, nested...)
 			continue
 		}
+		if clientToolSearch(item) && namespace == "" {
+			kind, name = "function", "tool_search"
+		}
 		if isUnsupportedHostedTool(kind) {
 			if b.unsupportedTools == nil {
 				b.unsupportedTools = make(map[string]bool)
@@ -326,6 +332,10 @@ func toolDefinitionFingerprint(item object) string {
 		}
 	}
 	return fingerprint(definition)
+}
+
+func clientToolSearch(item object) bool {
+	return item["type"] == "tool_search" && item["execution"] == "client"
 }
 
 // Hosted capabilities cannot be relayed as client function calls. Ignore known
@@ -433,6 +443,7 @@ func (b *Bridge) rebuildNativeHistoryCall(item object) (object, error) {
 func (b *Bridge) translateHistory(input []any) ([]any, error) {
 	result := make([]any, 0, len(input))
 	seenCalls := make(map[string]bool)
+	searchCalls := make(map[string]bool)
 	var trigger any
 	for index, raw := range input {
 		var toolImages object
@@ -441,6 +452,19 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 			return nil, fmt.Errorf("invalid Basispoints input item")
 		}
 		delete(item, "internal_chat_message_metadata_passthrough")
+		// Collect the revealed schemas through collectClientCatalog; send only a
+		// receipt through the history, so hidden definitions do not leak a second time.
+		id := text(item["call_id"])
+		if item["type"] == "tool_search_call" && item["execution"] == "client" {
+			searchCalls[id] = true
+			item = object{"type": "function_call", "call_id": id, "name": "tool_search", "arguments": item["arguments"]}
+		} else if item["type"] == "tool_search_output" && searchCalls[id] {
+			output := item["output"]
+			if output == nil {
+				output = "Tool search completed. Returned definitions are in the client tool catalog."
+			}
+			item = object{"type": "function_call_output", "call_id": id, "output": output}
+		}
 		switch text(item["type"]) {
 		case "additional_tools", "tool_search_output":
 			continue
@@ -783,6 +807,11 @@ func (b *Bridge) translateResponse(response object) error {
 			call, err := staged.translateCall(item)
 			if err != nil {
 				return err
+			}
+			if call["type"] == "function_call" && call["name"] == "tool_search" && call["namespace"] == nil && clientToolSearch(b.tools["tool_search"].Catalog) {
+				call = maps.Clone(call) // Keep the function-call identity staged for replay.
+				apicompat.RestoreClientToolSearchCall(call)
+				delete(call, "encrypted_function_args")
 			}
 			translated[i] = call
 		} else {

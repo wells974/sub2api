@@ -645,6 +645,7 @@ export interface SyncUpstreamModelsResult {
 }
 
 export interface SyncUpstreamModelsOptions {
+  after_create?: boolean
   whitelist_only?: boolean
   apply?: boolean
   automatic?: boolean

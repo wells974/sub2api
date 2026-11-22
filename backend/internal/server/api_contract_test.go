@@ -915,7 +915,7 @@ func TestAPIContracts(t *testing.T) {
 					"excel_bps_image_budget_mib": 1024,
 					"excel_bps_image_max_requests": 128,
 					"excel_bps_image_max_images": 20,
- "smart_ops_hidden_menu_items": ["/admin/lottery","/admin/qqbot/overview","/admin/channel-operations","/admin/controlled-experiments","/admin/account-ops","/admin/group-cache-tests","/admin/request-captures"],
+ "smart_ops_hidden_menu_items": ["/admin/lottery","/admin/qqbot/overview","/admin/controlled-experiments","/admin/group-cache-tests","/admin/request-captures"],
  "request_capture_enabled": false,
  "request_capture_quota_mib": 1024,
  "request_capture_retention_days": 7,
@@ -1064,6 +1064,8 @@ func TestAPIContracts(t *testing.T) {
 					"model_plaza_enabled": false,
 					"model_plaza_require_auth": false,
 					"model_plaza_description": "",
+					"model_plaza_usd_to_cny_rate": 7,
+					"model_plaza_currency": {"wallet_currency":"USD","wallet_unit_value":1,"customer_currency":"USD","official_currency":"USD","official_platform_currencies":{},"official_model_currencies":{}},
 					"plugin_management_enabled": false,
 					"support_ticket_enabled": false,
 					"support_ticket_config": {
@@ -1302,7 +1304,7 @@ func TestAPIContracts(t *testing.T) {
 					"excel_bps_image_budget_mib": 1024,
 					"excel_bps_image_max_requests": 128,
 					"excel_bps_image_max_images": 20,
- "smart_ops_hidden_menu_items": ["/admin/lottery","/admin/qqbot/overview","/admin/channel-operations","/admin/controlled-experiments","/admin/account-ops","/admin/group-cache-tests","/admin/request-captures"],
+ "smart_ops_hidden_menu_items": ["/admin/lottery","/admin/qqbot/overview","/admin/controlled-experiments","/admin/group-cache-tests","/admin/request-captures"],
  "request_capture_enabled": false,
  "request_capture_quota_mib": 1024,
  "request_capture_retention_days": 7,
@@ -1440,6 +1442,8 @@ func TestAPIContracts(t *testing.T) {
 					"model_plaza_enabled": false,
 					"model_plaza_require_auth": false,
 					"model_plaza_description": "",
+					"model_plaza_usd_to_cny_rate": 7,
+					"model_plaza_currency": {"wallet_currency":"USD","wallet_unit_value":1,"customer_currency":"USD","official_currency":"USD","official_platform_currencies":{},"official_model_currencies":{}},
 					"plugin_management_enabled": false,
 					"support_ticket_enabled": false,
 					"support_ticket_config": {
@@ -1621,7 +1625,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	settingRepo := newStubSettingRepo()
 	settingService := service.NewSettingService(settingRepo, cfg)
 
-	adminService := service.NewAdminService(nil, userRepo, groupRepo, &accountRepo, proxyRepo, apiKeyRepo, redeemRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	adminService := service.NewAdminService(nil, userRepo, groupRepo, &accountRepo, proxyRepo, apiKeyRepo, redeemRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	authHandler := handler.NewAuthHandler(cfg, nil, userService, settingService, nil, redeemService, nil, nil)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	usageHandler := handler.NewUsageHandler(usageService, apiKeyService, nil, nil)

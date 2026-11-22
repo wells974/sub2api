@@ -80,6 +80,7 @@ func (b *Bridge) ApplyOnDemandCatalog(prepared, source []byte, enabled bool) ([]
 	if b.structured != nil {
 		return fallback("structured_output")
 	}
+	nativeDiscovery := clientToolSearch(b.tools["tool_search"].Catalog)
 	for name, info := range b.tools {
 		if name == catalogLookupName || info.Name == catalogLookupName {
 			return fallback("lookup_name_collision")
@@ -95,7 +96,7 @@ func (b *Bridge) ApplyOnDemandCatalog(prepared, source []byte, enabled bool) ([]
 		entry, _ := raw.(object)
 		name := text(entry["name"])
 		info := b.tools[name]
-		immediate := name == carrier
+		immediate := name == carrier || clientToolSearch(info.Catalog) || (nativeDiscovery && b.clientSearchResults[name])
 		switch info.Name {
 		case "exec_command", "write_stdin", "apply_patch", "update_plan":
 			immediate = true

@@ -150,11 +150,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		if middleware2.RejectRequestBodyReadError(c, err) {
 			return
 		}
-		if maxErr, ok := extractMaxBytesError(err); ok {
-			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
+		status, message := requestBodyReadFailure(reqLog, c.Request, err)
+		if status == 499 {
+			c.Status(status)
 			return
 		}
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
+		h.errorResponse(c, status, "invalid_request_error", message)
 		return
 	}
 
@@ -228,6 +229,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by composite groups")
 		return
 	}
+	c.Request = c.Request.WithContext(service.WithGatewayMessagesSelection(c.Request.Context(), reqModel))
 	if rejectSystemOneOnlyPlatform(c, apiKey, h.errorResponse) {
 		return
 	}
@@ -926,10 +928,50 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := c.Writer.Size()
+			var probeResponse *probePenaltyResponse
+			if account.ProbePenaltyMinimum() > 0 {
+				if !h.gatewayService.ProbePenaltySettlementEnabled() {
+					if queueRelease != nil {
+						queueRelease()
+					}
+					if accountReleaseFunc != nil {
+						accountReleaseFunc()
+					}
+					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Probe penalty requires durable settlement", streamStarted)
+					return
+				}
+				probeResponse, err = newProbePenaltyResponse(c.Writer, attemptParsedReq.Stream)
+				if err != nil {
+					if queueRelease != nil {
+						queueRelease()
+					}
+					if accountReleaseFunc != nil {
+						accountReleaseFunc()
+					}
+					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Probe penalty response unavailable", streamStarted)
+					return
+				}
+				defer probeResponse.close()
+				c.Writer = probeResponse
+			}
 			if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
 				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, attemptBody, hasBoundSession)
 			} else {
 				result, err = h.gatewayService.Forward(requestCtx, c, account, attemptParsedReq)
+			}
+
+			if probeResponse != nil {
+				c.Writer = probeResponse.ResponseWriter
+				if err == nil {
+					err = probeResponse.validate()
+				}
+				if err != nil && probeResponse.size >= 0 {
+					if probeResponse.status >= http.StatusBadRequest {
+						_ = probeResponse.finish(nil)
+					} else {
+						probeResponse.settlementError()
+					}
+				}
 			}
 
 			// 兜底释放串行锁（正常情况已通过回调提前释放）
@@ -975,8 +1017,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				forceCacheBilling := fs.ForceCacheBilling
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), currentAPIKey)
 				sessionID := service.ExtractClientSessionID(c)
-				h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
-					if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+				record := func(ctx context.Context) error {
+					return h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 						Result:             result,
 						QuotaPlatform:      quotaPlatform,
 						APIKey:             currentAPIKey,
@@ -993,15 +1035,23 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						ForceCacheBilling:  forceCacheBilling,
 						APIKeyService:      h.apiKeyService,
 						ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
-					}); err != nil {
-						logger.L().With(
-							zap.String("component", "handler.gateway.messages"),
-							zap.Int64("user_id", subject.UserID),
-							zap.Int64("api_key_id", currentAPIKey.ID),
-							zap.Any("group_id", currentAPIKey.GroupID),
-							zap.String("model", reqModel),
-							zap.Int64("account_id", account.ID),
-						).Error("gateway.record_usage_failed", zap.Error(err))
+					})
+				}
+				if probeResponse != nil && err == nil {
+					result.ProbePenaltyEligible = true
+					if billingErr := record(service.WithProbePenaltyResult(context.WithoutCancel(c.Request.Context()), result)); billingErr != nil {
+						reqLog.Error("gateway.probe_penalty_settlement_failed", zap.Error(billingErr))
+						probeResponse.settlementError()
+						return
+					}
+					if responseErr := probeResponse.finish(result); responseErr != nil {
+						reqLog.Error("gateway.probe_penalty_response_failed", zap.Error(responseErr))
+					}
+					return
+				}
+				h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+					if billingErr := record(ctx); billingErr != nil {
+						reqLog.Error("gateway.record_usage_failed", zap.Error(billingErr))
 					}
 				})
 			}
@@ -1223,6 +1273,22 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 
 	// Get available models from account configurations for the selected group platform.
 	availableModels := h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, platform)
+	if platform == service.PlatformAnthropic {
+		var group *service.Group
+		if apiKey != nil {
+			group = apiKey.Group
+		}
+		source := availableModels
+		if group != nil && group.ModelAllowlistEnabled() {
+			source = service.ModelListingSource(platform, availableModels, service.DefaultModelIDsForPlatform(platform))
+		} else if len(source) == 0 {
+			source = service.DefaultModelIDsForPlatform(platform)
+		}
+		expanded := h.gatewayService.ExpandAnthropicLongContextModels(c.Request.Context(), group, source)
+		if len(availableModels) > 0 || len(expanded) > len(source) || (group != nil && group.ModelAllowlistEnabled()) {
+			availableModels = expanded
+		}
+	}
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
 		source := service.ModelListingSource(platform, availableModels, service.DefaultModelIDsForPlatform(platform))
 		writeAllowlistedModelsList(c, platform, apiKey.Group.ModelAllowlist.FilterForListing(source))
@@ -2124,11 +2190,12 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 		if middleware2.RejectRequestBodyReadError(c, err) {
 			return
 		}
-		if maxErr, ok := extractMaxBytesError(err); ok {
-			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
+		status, message := requestBodyReadFailure(reqLog, c.Request, err)
+		if status == 499 {
+			c.Status(status)
 			return
 		}
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
+		h.errorResponse(c, status, "invalid_request_error", message)
 		return
 	}
 

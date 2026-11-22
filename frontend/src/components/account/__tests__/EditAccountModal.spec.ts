@@ -2481,20 +2481,20 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.upstream_billing_probe_enabled).toBe(true)
   })
 
-  it('keeps New API multipliers manual despite legacy automatic sync flags', async () => {
+  it('keeps customer billing manual and honors disabled New API cost sync', async () => {
     const account = buildAccount()
     account.extra = {
       upstream_billing_provider: 'new_api',
       upstream_billing_probe_enabled: true,
       upstream_billing_rate_sync_enabled: true,
-      cost_multiplier_auto_sync: true,
+      cost_multiplier_auto_sync: false,
       cost_multiplier: 0.2
     }
     updateAccountMock.mockReset().mockResolvedValue(account)
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
     const wrapper = mountModal(account)
     expect(wrapper.find('[data-testid="upstream-billing-rate-sync"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="account-cost-auto-sync"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="account-cost-auto-sync"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('admin.accounts.upstreamBilling.newAPI.groupRatioHint')
     expect(wrapper.get<HTMLInputElement>('[data-testid="account-rate-multiplier"]').element.disabled).toBe(false)
     expect(wrapper.get<HTMLInputElement>('[data-testid="account-cost-multiplier"]').element.disabled).toBe(false)
@@ -2507,8 +2507,25 @@ describe('EditAccountModal', () => {
       rate_multiplier: 0.7,
       upstream_billing_probe_enabled: true,
       upstream_billing_rate_sync_enabled: false,
-      extra: { cost_multiplier: 0.3, cost_multiplier_auto_sync: false }
+      extra: { cost_multiplier: 0.3 }
     })
+  })
+
+  it('preserves New API converted cost settings when saving an unrelated account edit', async () => {
+    const account = buildAccount()
+    account.extra = { ...account.extra, upstream_billing_provider: 'new_api', new_api_apply_usd_rate: true, cost_multiplier_auto_sync: true, cost_multiplier: 0.7 }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLInputElement>('[data-testid="account-cost-multiplier"]').element.disabled).toBe(true)
+    expect(wrapper.get<HTMLInputElement>('[data-testid="account-rate-multiplier"]').element.disabled).toBe(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const extra = updateAccountMock.mock.calls[0]?.[1].extra
+    expect(extra).not.toHaveProperty('cost_multiplier')
+    expect(extra).not.toHaveProperty('cost_multiplier_auto_sync')
+    expect(extra).not.toHaveProperty('new_api_apply_usd_rate')
   })
 
   it('enabling rate sync also enables probing and stops submitting a manual rate', async () => {
@@ -2691,6 +2708,20 @@ describe('EditAccountModal', () => {
     expect(wrapper.get<HTMLInputElement>('[data-testid="openai-endpoint-capability-seedance"]').element.checked).toBe(true)
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.openai_capabilities).toEqual(['chat_completions', 'seedance'])
+  })
+
+  it.each(['seedance', 'embeddings'])('preserves OpenAI Videos with %s enabled', async (otherCapability) => {
+    const account = buildAccount()
+    account.credentials.openai_capabilities = [otherCapability, 'videos']
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLInputElement>('[data-testid="openai-endpoint-capability-videos"]').element.checked).toBe(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.openai_capabilities).toEqual([otherCapability, 'videos'])
   })
 
   it('keeps at least one OpenAI APIKey endpoint capability selected', async () => {
@@ -3928,3 +3959,64 @@ describe('initial OAuth model scope ownership', () => {
   expect(useNewFeatureNoticeStore().isDismissed(41, NEW_FEATURE_NOTICES.protocolFeatureSwitches)).toBe(true)
   reloaded.unmount()
  })
+
+
+describe('Claude account probe penalty', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(buildAccount())
+  })
+  const account = () => ({ ...buildAccount(), platform: 'anthropic', credentials: { api_key: 'synthetic-key', base_url: 'https://example.invalid' } })
+  it('enables, saves, reloads and disables the account minimum without changing group prices', async () => {
+    const original = account()
+    const wrapper = mountModal(original); await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('[data-testid="probe-penalty-enabled"]').element.checked).toBe(false)
+    await wrapper.get('[data-testid="probe-penalty-enabled"]').setValue(true)
+    await wrapper.get('[data-testid="probe-penalty-minimum"]').setValue(0.001)
+    await wrapper.get('#edit-account-form').trigger('submit.prevent'); await flushPromises()
+    expect(updateAccountMock).toHaveBeenCalledWith(1, expect.objectContaining({ extra: expect.objectContaining({ probe_penalty: { enabled: true, minimum_charge: 0.001 } }) }))
+    const extra = updateAccountMock.mock.calls[0][1].extra
+    wrapper.unmount(); updateAccountMock.mockClear()
+    const reopened = mountModal({ ...original, extra }); await flushPromises()
+    expect(reopened.get<HTMLInputElement>('[data-testid="probe-penalty-enabled"]').element.checked).toBe(true)
+    await reopened.get('[data-testid="probe-penalty-enabled"]').setValue(false)
+    await reopened.get('#edit-account-form').trigger('submit.prevent'); await flushPromises()
+    expect(updateAccountMock.mock.calls[0][1].extra.probe_penalty).toEqual({ enabled: false, minimum_charge: 0.001 })
+  })
+  it('rejects a zero enabled minimum and hides unsupported account controls', async () => {
+    const wrapper = mountModal(account()); await flushPromises()
+    await wrapper.get('[data-testid="probe-penalty-enabled"]').setValue(true)
+    await wrapper.get('[data-testid="probe-penalty-minimum"]').setValue(0)
+    await wrapper.get('#edit-account-form').trigger('submit.prevent'); await flushPromises()
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    expect(showErrorMock).toHaveBeenCalledWith('admin.accounts.probePenalty.invalid')
+    wrapper.unmount()
+    const other = mountModal(buildAccount()); await flushPromises()
+    expect(other.find('[data-testid="probe-penalty-settings"]').exists()).toBe(false)
+  })
+  it('keeps the new announcement independent and remembers dismissal across remounts', async () => {
+    localStorage.clear(); const pinia = createPinia(); setActivePinia(pinia)
+    const notices = useNewFeatureNoticeStore(pinia)
+    notices.dismiss(41, NEW_FEATURE_NOTICES.protocolFeatureSwitches)
+    const wrapper = mountModal(account()); await flushPromises()
+    const badge = wrapper.findAllComponents(NewFeatureBadge).find(b => b.props('noticeId') === NEW_FEATURE_NOTICES.accountProbePenalty)!
+    expect(badge.get('button').exists()).toBe(true)
+    await badge.get('button').trigger('click')
+    wrapper.unmount(); setActivePinia(createPinia())
+    const reloaded = mountModal(account()); await flushPromises()
+    expect(reloaded.get('[data-testid="probe-penalty-settings"]').find('[data-testid="new-feature-badge"]').exists()).toBe(false)
+    expect(useNewFeatureNoticeStore().isDismissed(41, NEW_FEATURE_NOTICES.protocolFeatureSwitches)).toBe(true)
+    const later = mount(NewFeatureBadge, { props: { noticeId: 'probe-penalty-fixture-next-feature', userId: 41 } })
+    expect(later.get('button').exists()).toBe(true)
+  })
+})
+
+
+it('omits untouched probe settings so stale editors cannot restore old charges', async () => {
+  vi.clearAllMocks(); checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false }); updateAccountMock.mockResolvedValue(buildAccount())
+  const account = { ...buildAccount(), platform: 'anthropic', credentials: { api_key: 'synthetic' }, extra: { probe_penalty: { enabled: true, minimum_charge: .001 } } }
+  const wrapper = mountModal(account); await flushPromises()
+  await wrapper.get('#edit-account-form').trigger('submit.prevent'); await flushPromises()
+  expect(updateAccountMock.mock.calls[0][1].extra).not.toHaveProperty('probe_penalty')
+})

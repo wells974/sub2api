@@ -1,5 +1,9 @@
 import type { AccountOpsPoolConfig, AccountOpsPoolDetails } from './accountOpsPool'
 import { apiClient } from '../client'
+export async function setAccountOpsBalanceLowNotification(id: number, enabled: boolean): Promise<AccountOpsConfig> {
+  const { data } = await apiClient.put(`/admin/account-ops/accounts/${id}/balance-notification`, { enabled })
+  return data
+}
 export type AccountOpsWebhookProvider = 'wecom' | 'dingtalk' | 'feishu' | 'custom'
 export interface AccountOpsWebhook {
   id: string
@@ -82,6 +86,7 @@ export interface AccountOpsConfig {
   recipient: string
   email_name?: string
   balance_low: boolean
+  balance_low_disabled_account_ids?: number[]
   weekly_quota: boolean
   cooldown_minutes: number
   webhooks?: AccountOpsWebhook[]

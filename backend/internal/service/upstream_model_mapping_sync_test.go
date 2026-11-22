@@ -31,7 +31,7 @@ func (r *upstreamModelMappingRepoStub) UpdateExtra(context.Context, int64, map[s
 	return nil
 }
 
-func (r *upstreamModelMappingRepoStub) ClaimAutomaticUpstreamModelSync(_ context.Context, _ int64, now, next time.Time) (bool, error) {
+func (r *upstreamModelMappingRepoStub) ClaimUpstreamModelSyncWindow(_ context.Context, _ int64, now, next time.Time, automatic bool) (bool, error) {
 	r.claimCalls++
 	if now.Before(r.next) {
 		return false, nil
@@ -82,6 +82,28 @@ func TestApplyUpstreamModelsReplacesStaleModelsAndPreservesLiveRedirects(t *test
 	require.Equal(t, 0, repo.claimCalls, "explicit apply is not subject to the automatic interval")
 	require.Len(t, upstream.requests, 1, "model sync must not send a generation/probe request")
 	require.Equal(t, "/v1/models", upstream.requests[0].URL.Path)
+}
+
+func TestNewOAuthModelSyncSharesPollingWindow(t *testing.T) {
+	created := UpstreamModelSyncOptions{Apply: true, AfterCreate: true}
+	poll := UpstreamModelSyncOptions{Apply: true, Automatic: true}
+	for _, first := range []UpstreamModelSyncOptions{created, poll} {
+		t.Run(fmt.Sprintf("create_first=%t", first.AfterCreate), func(t *testing.T) {
+			svc, repo, upstream := modelMappingSyncFixture(http.StatusOK, `{"models":[{"slug":"gpt-6-luna"}]}`)
+			repo.account.Type = AccountTypeOAuth
+			repo.account.Credentials = map[string]any{"access_token": "fixture"}
+			result, err := svc.SyncUpstreamModelCatalogWithOptions(t.Context(), repo.account, first)
+			require.NoError(t, err)
+			require.True(t, result.Applied)
+			for _, repeated := range []UpstreamModelSyncOptions{created, poll} {
+				result, err = svc.SyncUpstreamModelCatalogWithOptions(t.Context(), repo.account, repeated)
+				require.NoError(t, err)
+				require.Equal(t, "throttled", result.Skipped)
+			}
+			require.Len(t, upstream.requests, 1)
+			require.Equal(t, 1, repo.applyCalls)
+		})
+	}
 }
 
 func TestAutomaticUpstreamModelsFailureConsumesRefreshWindow(t *testing.T) {

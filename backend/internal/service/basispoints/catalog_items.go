@@ -46,7 +46,9 @@ func flattenCatalogAt(value any, namespace, location string) ([]catalogDeclarati
 		if namespace != "" {
 			key = namespace + "." + name
 		}
-		if isUnsupportedHostedTool(kind) {
+		if clientToolSearch(item) && namespace == "" {
+			key = "tool_search"
+		} else if isUnsupportedHostedTool(kind) {
 			key = "hosted:" + kind
 		}
 		result = append(result, catalogDeclaration{item: item, namespace: namespace, key: key, path: itemPath})
@@ -74,7 +76,16 @@ func (b *Bridge) collectClientCatalog(source object, inherited bool) ([]any, err
 		if err != nil {
 			return nil, err
 		}
+		// The native client already revealed these definitions. Put the selected
+		// schema in the BPS prompt once, without requiring a second lookup.
+		clientResult := item["type"] == "tool_search_output" && item["execution"] == "client"
 		for _, declaration := range declarations {
+			if clientResult {
+				if b.clientSearchResults == nil {
+					b.clientSearchResults = make(map[string]bool)
+				}
+				b.clientSearchResults[declaration.key] = true
+			}
 			if _, exists := b.tools[declaration.key]; exists && !inherited {
 				continue
 			}

@@ -60,6 +60,27 @@ describe('account operations tabs and independent saves', () => {
     } finally { wrapper.unmount() }
   })
 
+  it('opens global pool history from a scoped account without showing another account’s events', async () => {
+    const common = { signal: '', http_status: 0, first_seen: '', last_seen: '', occurrences: 1, state: 'sent' as const, last_sent_at: null, next_send_at: '', attempts: 1 }
+    vi.mocked(getAccountOpsEvents).mockResolvedValue({ has_more: false, items: [
+      { ...common, account_id: 0, account_name: 'Entire pool', kind: 'account_pool' },
+      { ...common, account_id: 41, account_name: 'Scoped member', kind: 'balance_low' },
+      { ...common, account_id: 42, account_name: 'Other member', kind: 'balance_low' },
+    ] })
+    const wrapper = create()
+    try {
+      await wrapper.setProps({ accountId: 41 })
+      await flushPromises()
+      await wrapper.get('[data-testid="account-ops-tab-records"]').trigger('click')
+      expect(wrapper.text()).toContain('Scoped member')
+      expect(wrapper.text()).not.toContain('Entire pool')
+      await wrapper.get('select:has(option[value="account_pool"])').setValue('account_pool')
+      expect(wrapper.text()).toContain('Entire pool')
+      expect(wrapper.text()).not.toContain('Other member')
+      expect(wrapper.text()).not.toContain('Scoped member')
+    } finally { wrapper.unmount() }
+  })
+
   it('preserves provider links and pool settings across scoped saves and immediate group reopening', async () => {
     const pool = { enabled: true, notify_states: true, notify_counts: true }
     const groups = pollingGroups()
@@ -436,8 +457,7 @@ describe('account operations tabs and independent saves', () => {
     ])
     vi.mocked(getAccountOpsThresholdGroups).mockResolvedValue([{ id: 'manual-mixed', name: 'Mixed', default_name: 'Mixed', provider: 'sub2api', site: 'https://example.com', mode: 'manual', account_ids: [1, 2] }])
     const wrapper = create(); await flushPromises()
-    const inputs = wrapper.get('[data-testid="rule-row-manual-mixed"]').findAll('input')
-    await inputs[1]!.setValue(false); await flushPromises()
+    await wrapper.get('[data-testid="toggle-rule-manual-mixed"]').setValue(false); await flushPromises()
     expect(saveAccountOpsRuleGroups).toHaveBeenCalledWith([{ account_ids: [1, 2], rule: { metric: 'balance', enabled: false, enabled_only: true } }])
     wrapper.unmount()
   })

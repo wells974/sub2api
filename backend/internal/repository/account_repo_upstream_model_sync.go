@@ -11,10 +11,10 @@ import (
 
 var _ service.UpstreamModelMappingSyncRepository = (*accountRepository)(nil)
 
-// ClaimAutomaticUpstreamModelSync is one SQL compare-and-set, shared by all
+// ClaimUpstreamModelSyncWindow is one SQL compare-and-set, shared by all
 // application instances. It records failed attempts too and does not change
 // scheduling, quotas, credentials, or the account revision.
-func (r *accountRepository) ClaimAutomaticUpstreamModelSync(ctx context.Context, accountID int64, now, next time.Time) (bool, error) {
+func (r *accountRepository) ClaimUpstreamModelSyncWindow(ctx context.Context, accountID int64, now, next time.Time, automatic bool) (bool, error) {
 	if r == nil || r.sql == nil {
 		return false, errors.New("account repository SQL executor is not configured")
 	}
@@ -22,11 +22,11 @@ func (r *accountRepository) ClaimAutomaticUpstreamModelSync(ctx context.Context,
 		UPDATE accounts
 		SET extra = jsonb_set(COALESCE(extra, '{}'::jsonb), '{upstream_model_sync}',
 			jsonb_build_object('last_attempt_unix', $2::bigint, 'next_attempt_unix', $3::bigint), true)
-		WHERE id = $1 AND deleted_at IS NULL AND status = 'active' AND schedulable = TRUE
+		WHERE id = $1 AND deleted_at IS NULL AND (NOT $4::boolean OR (status = 'active' AND schedulable = TRUE))
 			AND CASE WHEN jsonb_typeof(extra->'upstream_model_sync'->'next_attempt_unix') = 'number'
 				THEN (extra->'upstream_model_sync'->>'next_attempt_unix')::numeric
 				ELSE 0 END <= $2::bigint
-	`, accountID, now.Unix(), next.Unix())
+	`, accountID, now.Unix(), next.Unix(), automatic)
 	if err != nil {
 		return false, err
 	}

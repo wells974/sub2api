@@ -32,7 +32,7 @@ func (s *whitelistStore) UpdateExtra(context.Context, int64, map[string]any) err
 	return nil
 }
 
-func (s *whitelistStore) ClaimAutomaticUpstreamModelSync(context.Context, int64, time.Time, time.Time) (bool, error) {
+func (s *whitelistStore) ClaimUpstreamModelSyncWindow(context.Context, int64, time.Time, time.Time, bool) (bool, error) {
 	return false, fmt.Errorf("unexpected automatic claim")
 }
 

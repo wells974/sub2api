@@ -22,6 +22,9 @@ func initialModel(r *openAIAgentRecoveryRequest, body []byte) string {
 // consumes a foreign response, grants tool provenance, or retries sent work.
 // Disabled by default; operators must explicitly accept loss of task context.
 func (s *OpenAIGatewayService) PrepareOpenAILossyHistoryRestart(ctx context.Context, c *gin.Context, body []byte, session, model string) (context.Context, []byte, bool) {
+	if s.openAILegacyCompatibility() {
+		return ctx, body, false
+	}
 	if s == nil {
 		return ctx, body, false
 	}
@@ -49,6 +52,7 @@ func (s *OpenAIGatewayService) PrepareOpenAILossyHistoryRestart(ctx context.Cont
 	r := openAIAgentRecoveryFromContext(next)
 	r.omittedHistory, r.omittedSource = true, nil
 	r.inputDigest, r.replayControlsDigest = openAIAgentRecoveryInputDigest(clean), openAI409ControlsDigest(clean)
+	r.controlFingerprints = openAI409FingerprintControls(clean)
 	return next, clean, true
 }
 

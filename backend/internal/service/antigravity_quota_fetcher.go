@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -56,8 +57,14 @@ func (f *AntigravityQuotaFetcher) FetchQuota(ctx context.Context, account *Accou
 		return nil, fmt.Errorf("create antigravity client failed: %w", err)
 	}
 
-	// 调用 API 获取配额
-	modelsResp, modelsRaw, err := client.FetchAvailableModels(ctx, accessToken, projectID, resolveModelsListReadLimit(f.cfg))
+	baseURL := resolveAntigravityForwardBaseURL(account)
+	if baseURL == "" {
+		return nil, errors.New("no antigravity base url configured")
+	}
+
+	// Query the same endpoint that receives forwarded requests for this account (daily for
+	// paid tiers, prod otherwise), because Google accounts quota separately per endpoint.
+	modelsResp, modelsRaw, err := client.FetchAvailableModelsFromURL(ctx, baseURL, accessToken, projectID, resolveModelsListReadLimit(f.cfg))
 	if err != nil {
 		// 403 Forbidden: 不报错，返回 is_forbidden 标记
 		var forbiddenErr *antigravity.ForbiddenError
@@ -85,6 +92,14 @@ func (f *AntigravityQuotaFetcher) FetchQuota(ctx context.Context, account *Accou
 
 	// 转换为 UsageInfo
 	usageInfo := f.buildUsageInfo(modelsResp, tierRaw, tierNormalized, loadResp)
+
+	// The per-group 5-hour and weekly windows. Not on the critical path: without them the
+	// per-model figures above are shown as before.
+	if summary, err := client.RetrieveUserQuotaSummaryFromURL(ctx, baseURL, accessToken, projectID); err != nil {
+		slog.Warn("failed to fetch antigravity quota summary", "account_id", account.ID, "error", err)
+	} else {
+		usageInfo.AntigravityQuotaGroups = buildAntigravityQuotaGroups(summary)
+	}
 
 	return &QuotaResult{
 		UsageInfo: usageInfo,
@@ -146,10 +161,11 @@ func (f *AntigravityQuotaFetcher) buildUsageInfo(modelsResp *antigravity.FetchAv
 
 		// remainingFraction 是剩余比例 (0.0-1.0)，转换为使用率百分比
 		utilization := int((1.0 - modelInfo.QuotaInfo.RemainingFraction) * 100)
+		resetTime := antigravityQuotaResetTime(modelInfo.QuotaInfo)
 
 		info.AntigravityQuota[modelName] = &AntigravityModelQuota{
 			Utilization: utilization,
-			ResetTime:   modelInfo.QuotaInfo.ResetTime,
+			ResetTime:   resetTime,
 		}
 
 		// 填充模型详细能力信息
@@ -182,8 +198,8 @@ func (f *AntigravityQuotaFetcher) buildUsageInfo(modelsResp *antigravity.FetchAv
 			progress := &UsageProgress{
 				Utilization: utilization,
 			}
-			if modelInfo.QuotaInfo.ResetTime != "" {
-				if resetTime, err := time.Parse(time.RFC3339, modelInfo.QuotaInfo.ResetTime); err == nil {
+			if resetTimeRaw := antigravityQuotaResetTime(modelInfo.QuotaInfo); resetTimeRaw != "" {
+				if resetTime, err := time.Parse(time.RFC3339, resetTimeRaw); err == nil {
 					progress.ResetsAt = &resetTime
 					progress.RemainingSeconds = int(time.Until(resetTime).Seconds())
 				}
@@ -204,6 +220,17 @@ func (f *AntigravityQuotaFetcher) buildUsageInfo(modelsResp *antigravity.FetchAv
 	}
 
 	return info
+}
+
+// antigravityQuotaResetTime suppresses moving upstream reset timestamps for unused quota.
+// Google returns resetTime = now + 5h on every fetch when remainingFraction == 1; that
+// moving timestamp is not an active reset deadline. Check the raw fraction rather than
+// the truncated integer utilization percentage so usage below 1% still retains its real deadline.
+func antigravityQuotaResetTime(quota *antigravity.ModelQuotaInfo) string {
+	if quota.RemainingFraction >= 1 {
+		return ""
+	}
+	return quota.ResetTime
 }
 
 // GetProxyURL 获取账户的代理 URL
@@ -271,4 +298,49 @@ func extractValidationURL(body string) string {
 		return m
 	}
 	return ""
+}
+
+func buildAntigravityQuotaGroups(summary *antigravity.QuotaSummaryResponse) []*AntigravityQuotaGroup {
+	if summary == nil {
+		return nil
+	}
+	windowOrder := map[string]int{"5h": 0, "weekly": 1}
+	var groups []*AntigravityQuotaGroup
+	for _, group := range summary.Groups {
+		if len(group.Buckets) == 0 {
+			continue
+		}
+		out := &AntigravityQuotaGroup{Name: group.DisplayName, Description: group.Description}
+		for _, bucket := range group.Buckets {
+			if out.Key == "" {
+				if i := strings.LastIndex(bucket.BucketID, "-"); i > 0 {
+					out.Key = bucket.BucketID[:i]
+				}
+			}
+			used := (1.0 - bucket.RemainingFraction) * 100
+			if used < 0 {
+				used = 0
+			}
+			window := &AntigravityQuotaWindow{Window: bucket.Window, Utilization: used}
+			if bucket.ResetTime != "" {
+				if resetAt, err := time.Parse(time.RFC3339, bucket.ResetTime); err == nil {
+					window.ResetsAt = &resetAt
+				}
+			}
+			out.Windows = append(out.Windows, window)
+		}
+		sort.SliceStable(out.Windows, func(i, j int) bool {
+			oi, iok := windowOrder[out.Windows[i].Window]
+			oj, jok := windowOrder[out.Windows[j].Window]
+			if !iok {
+				oi = len(windowOrder)
+			}
+			if !jok {
+				oj = len(windowOrder)
+			}
+			return oi < oj
+		})
+		groups = append(groups, out)
+	}
+	return groups
 }

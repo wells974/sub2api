@@ -23,7 +23,7 @@ export default {
           showAll: '全部显示',
           hideAll: '全部隐藏',
           count: '已选择 {visible} / {total} 个入口',
-          hint: '全部隐藏后，侧边栏将收起智能运维分组。请求采集等入口仍受原有功能启用条件控制。'
+          hint: '全部隐藏会隐藏上述入口。请求采集等入口仍受原有功能启用条件控制。'
         },
         excelBpsImages: {
           mode: '图片传输方式',
@@ -124,6 +124,13 @@ export default {
           enabledHint: '开启后顶栏显示入口，页面可通过 /model-plaza 独立访问。',
           requireAuth: '需要登录才可访问',
           requireAuthHint: '开启后未登录访问将跳转登录页；关闭则公开可见，匿名访客仅展示非专属分组。',
+          currencyHelp: '以下仅控制广场展示。默认按 1 站内额度 = 1 USD 展示，适用于原有美元价卡；请按本站经营口径设置，不会改变充值或计费。',
+          customerCurrency: '客户折后价币种', officialCurrency: '官方参考价默认币种',
+          walletValue: '1 站内额度的参考价值', walletCurrency: '额度参考价值币种',
+          overrides: '官方参考价币种覆盖', overridesHelp: '模型规则优先于平台规则，其余使用默认币种。平台 ID 和模型 ID 完整匹配，忽略大小写；不预设地区或供应商名单。',
+          scope: '匹配范围', platform: '平台', model: '模型', target: '平台或模型 ID', ruleCurrency: '参考价币种', addRule: '添加覆盖规则', invalidRules: '请填写完整且不重复的平台或模型 ID。',
+          displayExchangeRate: '广场美元／人民币展示汇率',
+          displayExchangeRateHint: '1 USD 对应的 CNY，默认 7.00。固定参考值，仅供广场币种切换；不修改充值、订阅、渠道价或扣费。',
           priceDescription: '价格说明（Markdown）',
           priceDescriptionHint: '展示在模型广场页面顶部，可用于说明计费规则、汇率、优惠活动等。',
         },
@@ -500,8 +507,8 @@ export default {
         defaultSubscriptionsDuplicate: '默认订阅存在重复分组：{groupId}。每个分组只能出现一次。',
         subscriptionGroup: '订阅分组',
         subscriptionValidityDays: '有效期（天）',
-        defaultPlatformQuotas: '默认平台限额（注册时分配）',
-        defaultPlatformQuotasHint: '新用户注册时自动获得这里配置的限额；已有用户不受影响。留空 = 该平台该窗口不限制。',
+        defaultPlatformQuotas: '默认平台限额（创建用户时分配）',
+        defaultPlatformQuotasHint: '后台创建或自行注册的普通用户会自动获得这里配置的限额；已有用户不受影响。留空 = 该平台该窗口不限制。',
         platformQuotaNotice: '月限额为 30 天滚动窗口，非自然月',
       },
       platformQuota: {
@@ -620,7 +627,7 @@ export default {
         cacheTTL5m: '5 分钟',
         cacheTTL1h: '1 小时',
         anthropicCacheTTL1hInjection: 'Anthropic 缓存 TTL 注入',
-        anthropicCacheTTL1hInjectionHint: '开启后，对 Anthropic OAuth/Setup Token 请求体中已有的 ephemeral 缓存块强制写入 1h；响应 usage 默认按 5m 回写计费，账号级 TTL 计费设置优先。',
+        anthropicCacheTTL1hInjectionHint: '开启后，对 Anthropic OAuth/Setup Token 请求体中已有的 ephemeral 缓存块强制写入 1h，Claude Code 压缩请求除外，写入 5m；响应 usage 默认按 5m 回写计费，账号级 TTL 计费设置优先。',
         rewriteMessageCacheControl: '改写消息缓存断点',
         rewriteMessageCacheControlHint: '默认关闭，保留客户端在 messages 内容块中的 cache_control。开启后会清除客户端断点并注入代理断点，适合不自行管理缓存策略的客户端。',
         clientDatelineNormalization: '客户端 dateline 归一化',

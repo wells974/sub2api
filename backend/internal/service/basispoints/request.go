@@ -30,6 +30,7 @@ type Bridge struct {
 	Effort               string
 	Warnings             []string
 	tools                map[string]tool
+	clientSearchResults  map[string]bool
 	unsupportedTools     map[string]bool
 	structured           *structuredOutput
 	replay               *ReplayCache

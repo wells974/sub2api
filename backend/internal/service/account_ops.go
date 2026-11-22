@@ -12,19 +12,20 @@ import (
 const accountOpsSettingsKey = "account_ops_notifications_v1"
 
 type AccountOpsConfig struct {
-	PoolNotifications   *AccountOpsPoolConfig   `json:"pool_notifications,omitempty"`
-	Enabled             bool                    `json:"enabled"`
-	Recipient           string                  `json:"recipient"`
-	EmailName           string                  `json:"email_name,omitempty"`
-	BalanceLow          bool                    `json:"balance_low"`
-	WeeklyQuota         bool                    `json:"weekly_quota"`
-	CooldownMinutes     int                     `json:"cooldown_minutes"`
-	Webhooks            []AccountOpsWebhook     `json:"webhooks"`
-	Groups              []AccountOpsGroup       `json:"groups"`
-	GroupsInitialized   bool                    `json:"groups_initialized,omitempty"`
-	UngroupedAccountIDs []int64                 `json:"ungrouped_account_ids,omitempty"`
-	BalanceThresholds   []AccountOpsBalanceRule `json:"balance_thresholds"`
-	QuotaThresholds     []AccountOpsQuotaRule   `json:"quota_thresholds"`
+	PoolNotifications            *AccountOpsPoolConfig   `json:"pool_notifications,omitempty"`
+	Enabled                      bool                    `json:"enabled"`
+	Recipient                    string                  `json:"recipient"`
+	EmailName                    string                  `json:"email_name,omitempty"`
+	BalanceLowDisabledAccountIDs []int64                 `json:"balance_low_disabled_account_ids,omitempty"`
+	BalanceLow                   bool                    `json:"balance_low"`
+	WeeklyQuota                  bool                    `json:"weekly_quota"`
+	CooldownMinutes              int                     `json:"cooldown_minutes"`
+	Webhooks                     []AccountOpsWebhook     `json:"webhooks"`
+	Groups                       []AccountOpsGroup       `json:"groups"`
+	GroupsInitialized            bool                    `json:"groups_initialized,omitempty"`
+	UngroupedAccountIDs          []int64                 `json:"ungrouped_account_ids,omitempty"`
+	BalanceThresholds            []AccountOpsBalanceRule `json:"balance_thresholds"`
+	QuotaThresholds              []AccountOpsQuotaRule   `json:"quota_thresholds"`
 }
 
 func defaultAccountOpsConfig() AccountOpsConfig {
@@ -109,6 +110,9 @@ type AccountOpsService struct {
 	robotLast          map[string]time.Time
 	degradationCursor  int64
 	autoSeen           map[int64]bool
+	oauth429Samples    [4]chan OAuth429Observation
+	oauth429Routing    OAuth429RoutingPolicy
+	oauth429RoutingErr error
 	autoConfigMu       sync.Mutex
 	autoGroups         GroupRepository
 	autoAccounts       AccountConcurrencyRepository
@@ -175,7 +179,7 @@ func (s *AccountOpsService) Observe(account *Account, status int, headers http.H
 		return
 	}
 	kind, signal := classifyAccountOpsFailure(account.Platform, status, headers, body)
-	if !c.Allows(kind) {
+	if !c.AllowsAccount(kind, account.ID) {
 		return
 	}
 	name := []rune(account.Name)
@@ -215,6 +219,9 @@ func (s *AccountOpsService) start(runSharedJobs bool) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
+	if repo, ok := s.accounts.(OAuth429Repository); ok {
+		s.startOAuth429Observations(ctx, repo)
+	}
 	s.fallbackSharedJobs.Store(runSharedJobs)
 	s.wg.Add(2)
 	go s.runAutoConfig(ctx)
@@ -256,6 +263,7 @@ func (s *AccountOpsService) start(runSharedJobs bool) {
 func (s *AccountOpsService) Stop() {
 	s.lifecycle.Lock()
 	cancel := s.cancel
+	oauth429HTTPObserver.CompareAndSwap(s, nil)
 	s.lifecycle.Unlock()
 	if cancel != nil {
 		cancel()

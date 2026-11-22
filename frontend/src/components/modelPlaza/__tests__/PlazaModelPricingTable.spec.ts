@@ -1,7 +1,16 @@
+import { defaultPlazaCurrencySettings } from '@/utils/plazaCurrency'
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import PlazaModelPricingTable from '../PlazaModelPricingTable.vue'
 import type { PlazaModel } from '@/api/modelPlaza'
+
+const { copyToClipboard } = vi.hoisted(() => ({
+  copyToClipboard: vi.fn().mockResolvedValue(true)
+}))
+
+vi.mock('@/composables/useClipboard', () => ({
+  useClipboard: () => ({ copyToClipboard })
+}))
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
@@ -44,6 +53,7 @@ function mountTable(
   rateMultiplier: number,
   userRateMultiplier?: number | null,
   extraProps?: {
+    priceDisplay?: import('@/utils/plazaCurrency').PlazaPriceDisplay
     imageRateIndependent?: boolean
     imageRateMultiplier?: number | null
     videoRateIndependent?: boolean
@@ -58,6 +68,56 @@ function mountTable(
 }
 
 describe('PlazaModelPricingTable', () => {
+  it('converts base, time and tier prices without changing discounts or official source values', async () => {
+    const model = tokenModel({ time_pricing: { timezone: 'Asia/Shanghai', periods: [{ start_time: '09:00', end_time: '12:00', multiplier: 2 }] } })
+    model.pricing!.intervals = [{ min_tokens: 0, max_tokens: null, input_price: 4e-6, output_price: 8e-6, cache_write_price: null, cache_read_price: null, per_request_price: null }]
+    const before = JSON.stringify(model)
+    const wrapper = mountTable([model], 0.5, 0.25, { priceDisplay: { usdToCny: 7, settings: { ...defaultPlazaCurrencySettings(), wallet_currency: 'CNY', wallet_unit_value: 0.5, customer_currency: 'CNY', official_currency: 'CNY' } } })
+    const rows = wrapper.findAll('tbody tr')
+    expect(rows[0].findAll('td')[1].text()).toContain('¥0.50')
+    expect(rows[1].findAll('td')[1].text()).toContain('¥1.00')
+    expect(rows[0].findAll('td')[4].text()).toContain('¥21.00')
+    await wrapper.setProps({ priceDisplay: { usdToCny: 7, settings: { ...defaultPlazaCurrencySettings(), wallet_currency: 'CNY', wallet_unit_value: 0.5 } } })
+    expect(wrapper.findAll('tbody tr')[0].findAll('td')[4].text()).toContain('$3.00')
+    expect(JSON.stringify(model)).toBe(before)
+    wrapper.unmount()
+  })
+
+  it('does not multiply the final image floor by personal discounts', () => {
+    const m = tokenModel({ name: 'gpt-image-2', platform: 'openai' })
+    m.pricing!.image_minimum_charge = 0.01
+    const wrapper = mountTable([m], 0.2, 0.01)
+    expect(wrapper.find('[data-image-minimum-charge]').exists()).toBe(true)
+    expect(wrapper.find('[data-image-minimum-charge]').attributes('title')).toBe('imageUsage.minimumHelp')
+    wrapper.unmount()
+    m.pricing!.billing_mode = 'image'
+    const imageWrapper = mountTable([m], 0.2)
+    expect(imageWrapper.find('[data-image-minimum-charge]').exists()).toBe(false)
+    expect(imageWrapper.text()).not.toContain('modelPlaza.table.unitPerMillion')
+    imageWrapper.unmount()
+  })
+
+  it('copies the exact model ID from the clicked pricing row', async () => {
+    const model = tokenModel({
+      name: 'provider/Model-v2',
+      time_pricing: {
+        timezone: 'Asia/Shanghai',
+        periods: [{ start_time: '09:00', end_time: '12:00', multiplier: 0.5 }]
+      }
+    })
+    const wrapper = mountTable([tokenModel(), model], 1)
+    const rows = wrapper.findAll('tbody tr').filter(row => row.text().includes(model.name))
+    expect(rows).toHaveLength(2)
+
+    for (const row of rows) {
+      const button = row.get('button[aria-label="modelPlaza.table.copyModelId"]')
+      await button.trigger('click')
+    }
+
+    expect(copyToClipboard.mock.calls).toEqual([[model.name], [model.name]])
+    wrapper.unmount()
+  })
+
   it.each([false, true])('shows independent 12h prices without a 1h label (intervals=%s)', (intervals) => {
     const model = tokenModel({ name: 'gpt-6-luna', platform: 'openai' })
     model.pricing!.cache_write_price = null

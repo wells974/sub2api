@@ -18,19 +18,23 @@ const (
 // processes and protects an in-flight discovery from overwriting a credential
 // rotation or a concurrent model-mapping edit.
 type UpstreamModelMappingSyncRepository interface {
-	ClaimAutomaticUpstreamModelSync(ctx context.Context, accountID int64, now, next time.Time) (bool, error)
+	ClaimUpstreamModelSyncWindow(ctx context.Context, accountID int64, now, next time.Time, automatic bool) (bool, error)
 	UpdateUpstreamModelMappingIfUnchanged(ctx context.Context, expected *Account, mapping map[string]string) (bool, error)
 }
 
 type UpstreamModelSyncOptions struct {
 	Apply         bool `json:"apply"`
 	Automatic     bool `json:"automatic"`
+	AfterCreate   bool `json:"after_create"`
 	WhitelistOnly bool `json:"whitelist_only"`
 }
 
 // Validate rejects combinations that could silently turn a mapping-only edit
 // into metadata discovery or an automatic refresh window.
 func (options UpstreamModelSyncOptions) Validate() error {
+	if options.AfterCreate && (!options.Apply || options.Automatic || options.WhitelistOnly) {
+		return newUpstreamModelSyncConfigError("Post-creation model sync requires an explicit full apply", nil)
+	}
 	if options.WhitelistOnly && (!options.Apply || options.Automatic) {
 		return newUpstreamModelSyncConfigError("Whitelist-only sync requires an explicit manual apply", nil)
 	}
@@ -75,12 +79,14 @@ func (s *AccountTestService) SyncUpstreamModelCatalogWithOptions(ctx context.Con
 	}
 
 	var nextSyncAt *time.Time
-	if options.Automatic {
+	// A user-requested initial sync shares the polling window across tabs and
+	// processes while keeping the explicit apply's account policy.
+	if options.Automatic || options.AfterCreate {
 		now := time.Now().UTC()
 		// The persisted gate has whole-second resolution. Round up so another
 		// instance cannot admit an attempt fractionally before five minutes.
 		next := time.Unix(now.Add(upstreamModelSyncInterval).Unix()+1, 0).UTC()
-		claimed, err := repo.ClaimAutomaticUpstreamModelSync(ctx, account.ID, now, next)
+		claimed, err := repo.ClaimUpstreamModelSyncWindow(ctx, account.ID, now, next, options.Automatic)
 		if err != nil {
 			return nil, newUpstreamModelSyncInternalError("Failed to claim automatic model sync", err)
 		}

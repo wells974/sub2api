@@ -1456,6 +1456,10 @@ func newSchedulerAccountMetaRevision() string {
 }
 
 func marshalSchedulerCacheAccount(account service.Account) ([]byte, []byte, error) {
+	// Hydration needs account configuration and group membership, not expanded
+	// group objects (also repeated in AccountGroups). Keep the caller's graph intact.
+	account.Groups = nil
+	account.AccountGroups = filterSchedulerAccountGroups(account.AccountGroups)
 	fullPayload, err := json.Marshal(account)
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal account: %w", err)
@@ -1628,7 +1632,7 @@ func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 		// capability_mismatch，而 Seedance 分支直接读该键、不走「未配置即放行」。
 		// 裁掉后 Seedance 账号在选号阶段必然被剔除，表现为 /v1/models 能列出模型、
 		// 建任务恒定 503 seedance_no_eligible_account。
-		"openai_capabilities",
+		"openai_capabilities", "qwen_video_protocol",
 		// Gemini 显式缓存的候选过滤（GeminiExplicitCacheExclusions）读本投影判定账号是否支持显式缓存：
 		// 官方地址、Vertex 认证方式与上游网关的显式缓存声明。缺这几个键时只能按类型粗筛，
 		// 不支持的账号要逐个选中后才被剔除。
@@ -1662,6 +1666,7 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		// Priority scoring runs on candidate metadata before full hydration.
 		// Dropping saved procurement cost silently substitutes the 0.1 default.
 		service.AccountCostMultiplierExtraKey,
+		service.AccountProbePenaltyExtraKey,
 		// Anthropic shared-window and Fable-only threshold checks run on this
 		// projection. UpdateExtra refreshes both payloads without a bucket rebuild.
 		"session_window_utilization",
@@ -1749,9 +1754,11 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		service.OpenAIAutoResetCreditStateExtraKey,
 		"model_rate_limits",
 		service.QualityModelIsolationKey,
+		service.OAuth429ModelBlocksKey,
 		service.UpstreamBillingProbeExtraKey,
 		service.GrokMediaEligibleExtraKey,
 		"grok_billing_snapshot",
+		service.GrokRateLimitHistoryExtraKey,
 	}
 	filtered := make(map[string]any)
 	for _, key := range keys {

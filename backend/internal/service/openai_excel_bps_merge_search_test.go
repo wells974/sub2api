@@ -118,6 +118,51 @@ func TestExcelBPSSearchOnDemandCatalogRoundTrip(t *testing.T) {
 	}
 }
 
+func TestExcelBPSNativeClientToolSearchThenSchemaRepair(t *testing.T) {
+	t.Setenv("SUB2API_BPS_ON_DEMAND_CATALOG_ENABLED", "true")
+	t.Setenv("SUB2API_BPS_SCHEMA_REPAIR_ENABLED", "true")
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{responses: []*http.Response{
+				bpsCompletionResponse(200, excelBPSRepairWire(t, "lookup", "Lookup", `{"name":"tool_search","arguments":{"query":"optional_00"}}`)),
+				bpsCompletionResponse(200, excelBPSRepairWire(t, "bad", "Run", `{"name":"optional_00","arguments":{"count":"one"}}`)),
+				bpsCompletionResponse(200, excelBPSRepairWire(t, "fixed", "Run", `{"name":"optional_00","arguments":{"count":1}}`)),
+			}}
+			svc := openAIClientToolsTestService(upstream)
+			account := excelAccount()
+			source := onDemandGatewaySource(stream)
+			tools := source["tools"].([]any)
+			source["tools"] = append(tools, map[string]any{"type": "tool_search", "execution": "client",
+				"parameters": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}, "required": []string{"query"}}})
+			source["tool_choice"] = map[string]any{"type": "tool_search"}
+			forward := func() gjson.Result {
+				body, err := json.Marshal(source)
+				require.NoError(t, err)
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+				_, err = svc.Forward(t.Context(), c, account, body)
+				require.NoError(t, err, rec.Body.String())
+				terminal := catalogGatewayTerminal(t, rec.Body.String(), stream)
+				require.Len(t, terminal.Get("output").Array(), 1)
+				return terminal.Get("output.0")
+			}
+			call := forward()
+			require.Equal(t, "tool_search_call", call.Get("type").String())
+			require.Equal(t, "optional_00", call.Get("arguments.query").String())
+			require.Len(t, upstream.requests, 1)
+			delete(source, "tool_choice")
+			source["input"] = []any{json.RawMessage(call.Raw), map[string]any{"type": "tool_search_output",
+				"execution": "client", "call_id": call.Get("call_id").String(), "tools": []any{tools[1]}}}
+			action := forward()
+			require.Equal(t, "function_call", action.Get("type").String())
+			require.Equal(t, "optional_00", action.Get("name").String())
+			require.JSONEq(t, `{"count":1}`, action.Get("arguments").String())
+			require.Len(t, upstream.requests, 3)
+		})
+	}
+}
+
 // Search intentionally does not reuse the ordinary correction callback: it
 // references a different native conversation after each completed search round.
 func TestExcelBPSSearchSchemaFailureDoesNotRepairOrReplay(t *testing.T) {
