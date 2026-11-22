@@ -60,6 +60,11 @@ func (s *AccountTestService) SyncUpstreamModelCatalogWithOptions(ctx context.Con
 	if account == nil || account.ID <= 0 {
 		return nil, newUpstreamModelSyncConfigError("A saved account is required to apply upstream models", nil)
 	}
+	// Gateway model discovery is administrator initiated. An OAuth creation
+	// callback or polling request must not replace its saved whitelist.
+	if account.gatewayProtocolsPending() && (options.Automatic || options.AfterCreate) {
+		return skippedUpstreamModelSync("account_policy", nil), nil
+	}
 	// Credential shadows and explicit OAuth alias mode have a narrower account
 	// policy than their parent's full catalog; do not broaden that policy.
 	if account.IsCredentialShadow() || account.IsOpenAIModelMappingAliases() || account.hasOAuthInitialModelSelection() {

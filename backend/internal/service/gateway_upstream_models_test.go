@@ -56,6 +56,20 @@ func TestGatewayUpstreamModelsDiscoveryAndApply(t *testing.T) {
 	}
 }
 
+func TestGatewayUpstreamModelsRequireManualApply(t *testing.T) {
+	for _, options := range []UpstreamModelSyncOptions{{Apply: true, Automatic: true}, {Apply: true, AfterCreate: true}} {
+		svc, repo, upstream := modelMappingSyncFixture(http.StatusOK, `{"data":[{"id":"new"}]}`)
+		repo.account.Platform, repo.account.Type = PlatformGateway, AccountTypeGateway
+		repo.account.Credentials["upstream_kind"] = "new_api"
+		catalog, err := svc.SyncUpstreamModelCatalogWithOptions(context.Background(), repo.account, options)
+		require.NoError(t, err)
+		require.Equal(t, "account_policy", catalog.Skipped)
+		require.Zero(t, repo.claimCalls)
+		require.Empty(t, upstream.requests)
+		require.Zero(t, repo.applyCalls)
+	}
+}
+
 func cloneTestCredentials(in map[string]any) map[string]any {
 	out := make(map[string]any, len(in))
 	for key, value := range in {

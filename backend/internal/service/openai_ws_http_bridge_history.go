@@ -99,20 +99,26 @@ func openAIWSHTTPBridgeCompletedItem(item gjson.Result) bool {
 
 func deduplicateOpenAIWSHTTPBridgeOutput(items []json.RawMessage) []json.RawMessage {
 	seen := make(map[string]struct{}, len(items))
+	seenCalls := make(map[[2]string]bool)
 	output := make([]json.RawMessage, 0, len(items))
 	for _, raw := range items {
 		item := gjson.ParseBytes(raw)
 		key := item.Get("id").String()
-		if key == "" {
-			key = item.Get("type").String() + "\x00" + item.Get("call_id").String()
-			if item.Get("call_id").String() == "" {
-				key = string(raw)
-			}
+		// Providers may assign a new item ID when repeating a tool call. The
+		// result references call_id, while the type distinguishes it from the call.
+		call := [2]string{item.Get("type").String(), item.Get("call_id").String()}
+		if key == "" && call[1] == "" {
+			key = string(raw)
 		}
-		if _, exists := seen[key]; exists {
+		if _, exists := seen[key]; exists || (call[1] != "" && seenCalls[call]) {
 			continue
 		}
-		seen[key] = struct{}{}
+		if key != "" {
+			seen[key] = struct{}{}
+		}
+		if call[1] != "" {
+			seenCalls[call] = true
+		}
 		output = append(output, raw)
 	}
 	return output

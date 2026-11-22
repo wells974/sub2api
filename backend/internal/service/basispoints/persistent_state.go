@@ -21,8 +21,9 @@ func NewPersistentCaches(ctx context.Context, store StateStore) (*ReplayCache, *
 }
 
 type persistedReplay struct {
-	Raw       json.RawMessage `json:"raw"`
-	Signature string          `json:"signature"`
+	ClientSearch bool            `json:"client_search,omitempty"`
+	Raw          json.RawMessage `json:"raw"`
+	Signature    string          `json:"signature"`
 }
 
 func (c *ReplayCache) stateError(err error) {
@@ -66,17 +67,17 @@ func (c *CatalogCache) Err() error {
 	return c.storeErr
 }
 
-func (c *ReplayCache) persist(scope, id string, item object, clientCall []object) {
+func (c *ReplayCache) persist(scope, id string, item, clientCall object, clientSearch bool) {
 	raw, err := json.Marshal(item)
 	if err != nil || len(raw) > replayCacheEntryBytes {
 		c.stateError(ErrStateCapacity)
 		return
 	}
 	signature := ""
-	if len(clientCall) == 1 {
-		signature = historyCallFingerprint(clientCall[0])
+	if clientCall != nil {
+		signature = historyCallFingerprint(clientCall)
 	}
-	encoded, err := json.Marshal(persistedReplay{raw, signature})
+	encoded, err := json.Marshal(persistedReplay{Raw: raw, Signature: signature, ClientSearch: clientSearch})
 	if err != nil {
 		c.stateError(err)
 		return
@@ -87,27 +88,27 @@ func (c *ReplayCache) persist(scope, id string, item object, clientCall []object
 	}
 	c.stateError(err)
 }
-func (c *ReplayCache) restore(scope, id, signature string, requireSignature bool) object {
+func (c *ReplayCache) restore(scope, id, signature string) (object, bool) {
 	raw, _, err := c.store.LoadBPSState(c.ctx, scope, "replay:"+id)
 	if err != nil {
 		c.stateError(err)
-		return nil
+		return nil, false
 	}
 	if len(raw) == 0 {
-		return nil
+		return nil, false
 	}
 	var entry persistedReplay
 	if json.Unmarshal(raw, &entry) != nil {
 		c.stateError(ErrStateUnavailable)
-		return nil
+		return nil, false
 	}
-	if requireSignature && signature != entry.Signature {
-		return nil
+	if signature != "" && signature != entry.Signature {
+		return nil, false
 	}
 	var item object
 	if decode(entry.Raw, &item) != nil {
 		c.stateError(ErrStateUnavailable)
-		return nil
+		return nil, false
 	}
-	return item
+	return item, entry.ClientSearch
 }

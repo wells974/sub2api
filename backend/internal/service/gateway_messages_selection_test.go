@@ -215,6 +215,26 @@ func TestGatewayProtocolCatalogSavedModelsAndGroupPrecedence(t *testing.T) {
 	require.Empty(t, models, "a fetched catalog must not bypass binding admission")
 }
 
+func TestGatewayProtocolCatalogWildcardGroup(t *testing.T) {
+	base, ctx := gatewayProtocolFixture(PlatformOpenAI)
+	base.group.ModelAllowlist = GroupModelAllowlist{Enabled: true, Models: []string{"gpt-*", "private-model"}}
+	svc := &GatewayService{accountRepo: &gatewayMessagesCandidateRepo{gatewayProtocolAdmissionRepo: base}}
+	for _, mapping := range []map[string]any{nil, {"*": "wire"}} {
+		base.account.Credentials["model_mapping"] = mapping
+		models, err := svc.GetGroupModelCatalog(ctx, base.group.ID, PlatformOpenAI)
+		require.NoError(t, err)
+		require.Contains(t, models, "private-model")
+		for _, model := range DefaultModelIDsForPlatform(PlatformOpenAI) {
+			if base.group.ModelAllowlist.Allows(model) {
+				require.Contains(t, models, model)
+			} else {
+				require.NotContains(t, models, model)
+			}
+		}
+		require.NotContains(t, models, "gpt-*")
+	}
+}
+
 func TestGatewayProtocolOpenAIChannelModelKeepsBinding(t *testing.T) {
 	base, ctx := gatewayProtocolFixture(PlatformOpenAI)
 	ctx = WithGatewayOpenAISelection(ctx, "public", "public")

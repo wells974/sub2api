@@ -2,6 +2,7 @@ package basispoints
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"strings"
@@ -42,13 +43,36 @@ func TestNativeToolSearchContinuationRepair(t *testing.T) {
 	require.True(t, unpaired.needsCatalogDisclosure(unpaired.tools["read_file"]), "legacy catalog-only items still use normal BPS discovery")
 }
 
+type searchReplayTestStore map[[2]string][]byte
+
+func (s searchReplayTestStore) LoadBPSState(_ context.Context, scope, key string) ([]byte, uint64, error) {
+	return s[[2]string{scope, key}], 0, nil
+}
+
+func (s searchReplayTestStore) SaveBPSState(_ context.Context, scope, key string, _ *uint64, raw []byte) (bool, error) {
+	s[[2]string{scope, key}] = raw
+	return true, nil
+}
+
 func TestClientToolSearchRoundTrip(t *testing.T) {
+	t.Run("in-memory", func(t *testing.T) {
+		cache := new(ReplayCache)
+		testClientSearchRoundTrip(t, cache, cache)
+	})
+	t.Run("shared-store", func(t *testing.T) {
+		store := searchReplayTestStore{}
+		first, _ := NewPersistentCaches(t.Context(), store)
+		second, _ := NewPersistentCaches(t.Context(), store)
+		testClientSearchRoundTrip(t, first, second)
+	})
+}
+
+func testClientSearchRoundTrip(t *testing.T, producer, cache *ReplayCache) {
 	source := testSource()
 	search := object{"type": "tool_search", "execution": "client", "parameters": object{"type": "object",
 		"properties": object{"query": object{"type": "string"}}, "required": []any{"query"}}}
 	source["tools"] = []any{search}
-	cache := new(ReplayCache)
-	_, bridge := mustPrepare(t, source, "session", cache)
+	_, bridge := mustPrepare(t, source, "session", producer)
 	makeCall := func(query any) object {
 		return nativeCall(object{"name": "tool_search", "arguments": object{"query": query}})
 	}
@@ -88,6 +112,26 @@ func TestClientToolSearchRoundTrip(t *testing.T) {
 	require.Equal(t, object{"query": "read_file"}, completed["arguments"])
 	require.Equal(t, native["call_id"], completed["call_id"])
 
+	resultOnly := object{"type": "tool_search_output", "call_id": completed["call_id"], "tools": []any{catalogReadTool("string")}}
+	source["input"] = []any{resultOnly}
+	preparedResult, continuation := mustPrepare(t, source, "session", cache)
+	require.Contains(t, mustTestValue[[]any](t, preparedResult["input"]), native)
+	require.True(t, continuation.completedToolHistory["call/"+text(completed["call_id"])])
+	require.True(t, continuation.clientSearchResults["read_file"])
+	_, unrelated := mustPrepare(t, source, "other-session", cache)
+	require.False(t, unrelated.hasToolHistory)
+
+	resultOnly["execution"] = "client"
+	_, explicit := mustPrepare(t, source, "session", cache)
+	require.True(t, explicit.hasToolHistory)
+	raw, err := json.Marshal(source)
+	require.NoError(t, err)
+	_, _, err = Prepare(raw, "other-session", cache)
+	require.ErrorContains(t, err, "resend the matching complete tool search call")
+	resultOnly["execution"] = "server"
+	_, hosted := mustPrepare(t, source, "session", cache)
+	require.False(t, hosted.hasToolHistory)
+
 	source["input"] = []any{completed, object{"type": "tool_search_output", "call_id": completed["call_id"], "execution": "client", "tools": []any{catalogReadTool("string")}}, message("user", "continue")}
 	prepared, next := mustPrepare(t, source, "session", cache)
 	input := mustTestValue[[]any](t, prepared["input"])
@@ -97,8 +141,23 @@ func TestClientToolSearchRoundTrip(t *testing.T) {
 	_, err = next.translateCall(nativeCall(object{"name": "read_file", "arguments": object{"path": 3}}))
 	require.Error(t, err)
 
+	// Reusing the same ID and arguments for an ordinary function must clear
+	// the search identity. Full native history restores it for older entries.
+	ordinary := object{"type": "function_call", "name": "tool_search", "call_id": completed["call_id"], "arguments": completed["arguments"]}
+	source["input"] = []any{ordinary}
+	_, _ = mustPrepare(t, source, "session", cache)
+	delete(resultOnly, "execution")
+	source["input"] = []any{resultOnly}
+	_, notSearch := mustPrepare(t, source, "session", cache)
+	require.False(t, notSearch.hasToolHistory)
+	source["input"] = []any{completed, resultOnly}
+	_, _ = mustPrepare(t, source, "session", cache)
+	source["input"] = []any{resultOnly}
+	_, restored := mustPrepare(t, source, "session", cache)
+	require.True(t, restored.hasToolHistory)
+
 	source["tools"] = []any{search, object{"type": "function", "name": "tool_search"}}
-	raw, err := json.Marshal(source)
+	raw, err = json.Marshal(source)
 	require.NoError(t, err)
 	_, _, err = Prepare(raw, "session", nil)
 	require.ErrorContains(t, err, "conflicting duplicate")

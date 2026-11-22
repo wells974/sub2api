@@ -83,3 +83,27 @@ func TestIssue999HTTPBridgeDeliveryControls(t *testing.T) {
 		})
 	}
 }
+
+func TestHTTPBridgeHistoryDeduplicatesToolCallAcrossItemIDs(t *testing.T) {
+	first := `{"type":"tool_search_call","id":"tsc_1","call_id":"call_a"}`
+	duplicate := `{"type":"tool_search_call","id":"tsc_2","call_id":"call_a"}`
+	receipt := `{"type":"tool_search_output","id":"tso_1","call_id":"call_a"}`
+	second := `{"type":"tool_search_call","id":"tsc_3","call_id":"call_b"}`
+	for _, terminalOutput := range []bool{false, true} {
+		var history openAIWSHTTPBridgeOutputHistory
+		items := []string{first, duplicate, receipt, second}
+		for i, raw := range items {
+			history.delivered([]byte(fmt.Sprintf(`{"type":"response.output_item.done","output_index":%d,"item":%s}`, i, raw)))
+		}
+		var output string
+		if terminalOutput {
+			output = strings.Join(items, ",")
+		}
+		history.delivered([]byte(`{"type":"response.completed","response":{"id":"resp_1","output":[` + output + `]}}`))
+		require.True(t, history.completed)
+		require.Len(t, history.output, 3)
+		for i, want := range []string{first, receipt, second} {
+			require.JSONEq(t, want, string(history.output[i]))
+		}
+	}
+}

@@ -172,7 +172,10 @@ func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, 
 	default:
 		return nil, nil, fmt.Errorf("basispoints input must be text or a Responses item array")
 	}
-	pairedSearch := pairedClientSearchOutputs(input)
+	pairedSearch, err := b.pairedClientSearchOutputs(input)
+	if err != nil {
+		return nil, nil, err
+	}
 	var catalog []any
 	if choice != "none" {
 		catalog, err = b.collectClientCatalog(source, inherited, pairedSearch)

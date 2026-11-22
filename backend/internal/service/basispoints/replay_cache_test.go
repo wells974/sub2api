@@ -11,6 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func (c *ReplayCache) put(scope, id string, item object, clientCall ...object) {
+	var call object
+	if len(clientCall) == 1 {
+		call = clientCall[0]
+	}
+	c.putCall(scope, id, item, call, false)
+}
+
 func TestReplayCacheIdleExpiryAndLRURefresh(t *testing.T) {
 	now := time.Date(2026, time.September, 26, 12, 0, 0, 0, time.UTC)
 	cache := &ReplayCache{now: func() time.Time { return now }}
@@ -57,7 +65,7 @@ func TestReplayCacheMismatchedCallDoesNotRefreshExpiry(t *testing.T) {
 	cache.put("scope", "call", object{"id": "native"}, call)
 	now = now.Add(replayCacheIdleTTL - time.Second)
 	call["input"] = "different"
-	require.Nil(t, cache.getForCall("scope", "call", call))
+	require.Nil(t, cache.getForCall("scope", "call", call, false))
 	now = now.Add(time.Second)
 	require.Nil(t, cache.get("scope", "call"))
 	require.Zero(t, cache.bytes)

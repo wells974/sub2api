@@ -74,19 +74,21 @@ func (catalog gatewayModelCatalog) directModels(target string) []string {
 	for i := range catalog.accounts {
 		account := &catalog.accounts[i]
 		models := groupAllowedConcreteModels(account, groupID)
-		for name := range account.GetModelMapping() {
+		mapping := account.GetModelMapping()
+		seedDefaults := len(mapping) == 0
+		for name := range mapping {
 			models = append(models, name)
-		}
-		// Concrete group entries also seed wildcard account mappings. The same
-		// admission below remains authoritative for both group and account policy.
-		if group.ModelAllowlist.Enabled {
-			models = append(models, group.ModelAllowlist.Models...)
-		}
-		if len(models) == 0 {
-			models = append(models, group.ModelAllowlist.Models...)
-			if !IsMultiProtocolAPIKeyProvider(target) {
-				models = append(models, DefaultModelIDsForPlatform(target)...)
+			if strings.Contains(name, "*") {
+				seedDefaults = true
 			}
+		}
+		// Group entries can supply private model names. Wildcards also need
+		// concrete platform candidates; admission below checks both policies.
+		if group.ModelAllowlist.Enabled || len(models) == 0 {
+			models = append(models, group.ModelAllowlist.Models...)
+		}
+		if seedDefaults && !IsMultiProtocolAPIKeyProvider(target) {
+			models = append(models, DefaultModelIDsForPlatform(target)...)
 		}
 		for _, model := range models {
 			if model == "" || strings.Contains(model, "*") {

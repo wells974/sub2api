@@ -36,6 +36,7 @@ type replayEntry struct {
 	key             string
 	raw             []byte
 	callFingerprint string
+	clientSearch    bool
 	used            time.Time
 	weight          int
 }
@@ -79,18 +80,18 @@ func (c *ReplayCache) expireLocked(now time.Time) {
 	}
 }
 
-func (c *ReplayCache) put(scope, id string, item object, clientCall ...object) {
+func (c *ReplayCache) putCall(scope, id string, item, clientCall object, clientSearch bool) {
 	if c == nil || id == "" {
 		return
 	}
 	if c.store != nil {
-		c.persist(scope, id, item, clientCall)
+		c.persist(scope, id, item, clientCall, clientSearch)
 		return
 	}
 	raw, err := json.Marshal(item)
 	var signature string
-	if err == nil && len(raw) <= replayCacheEntryBytes && len(clientCall) == 1 {
-		signature = historyCallFingerprint(clientCall[0])
+	if err == nil && len(raw) <= replayCacheEntryBytes && clientCall != nil {
+		signature = historyCallFingerprint(clientCall)
 	}
 	key := scope + "\x00" + id
 	weight := len(raw) + len(key) + len(signature) + 128
@@ -109,7 +110,7 @@ func (c *ReplayCache) put(scope, id string, item object, clientCall ...object) {
 	if err != nil || len(raw) > replayCacheEntryBytes || weight > replayCacheMaxBytes {
 		return
 	}
-	c.entries[key] = c.order.PushBack(replayEntry{key: key, raw: raw, callFingerprint: signature, used: now, weight: weight})
+	c.entries[key] = c.order.PushBack(replayEntry{key: key, raw: raw, callFingerprint: signature, clientSearch: clientSearch, used: now, weight: weight})
 	c.bytes += weight
 	for len(c.entries) > replayCacheMaxEntries || c.bytes > replayCacheMaxBytes {
 		c.removeLocked(c.order.Front())
@@ -117,7 +118,8 @@ func (c *ReplayCache) put(scope, id string, item object, clientCall ...object) {
 }
 
 func (c *ReplayCache) get(scope, id string) object {
-	return c.getMatching(scope, id, "", false)
+	item, _ := c.getMatching(scope, id, "")
+	return item
 }
 
 // A complete client call is stronger evidence than a reused call ID. Matching
@@ -161,20 +163,26 @@ func historyCallFingerprint(item object) string {
 	return fingerprint(canonical)
 }
 
-func (c *ReplayCache) getForCall(scope, id string, clientCall object) object {
+// Full history can disambiguate an ordinary function named tool_search and
+// upgrade a replay entry written before native client searches were tagged.
+func (c *ReplayCache) getForCall(scope, id string, clientCall object, clientSearch bool) object {
 	signature := historyCallFingerprint(clientCall)
 	if signature == "" {
 		return nil
 	}
-	return c.getMatching(scope, id, signature, true)
+	native, wasSearch := c.getMatching(scope, id, signature)
+	if native != nil && wasSearch != clientSearch {
+		c.putCall(scope, id, native, clientCall, clientSearch)
+	}
+	return native
 }
 
-func (c *ReplayCache) getMatching(scope, id, signature string, requireSignature bool) object {
+func (c *ReplayCache) getMatching(scope, id, signature string) (object, bool) {
 	if c == nil {
-		return nil
+		return nil, false
 	}
 	if c.store != nil {
-		return c.restore(scope, id, signature, requireSignature)
+		return c.restore(scope, id, signature)
 	}
 	c.mu.Lock()
 	now := c.currentTime()
@@ -182,12 +190,12 @@ func (c *ReplayCache) getMatching(scope, id, signature string, requireSignature 
 	entry := c.entries[scope+"\x00"+id]
 	if entry == nil {
 		c.mu.Unlock()
-		return nil
+		return nil, false
 	}
 	cached, ok := entry.Value.(replayEntry)
-	if !ok || (requireSignature && cached.callFingerprint != signature) {
+	if !ok || (signature != "" && cached.callFingerprint != signature) {
 		c.mu.Unlock()
-		return nil
+		return nil, false
 	}
 	cached.used = now
 	entry.Value = cached
@@ -197,9 +205,9 @@ func (c *ReplayCache) getMatching(scope, id, signature string, requireSignature 
 	// outside the global cache lock, including after eviction/replacement.
 	var item object
 	if decode(cached.raw, &item) != nil {
-		return nil
+		return nil, false
 	}
-	return item
+	return item, cached.clientSearch
 }
 
 func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
@@ -440,7 +448,7 @@ func (b *Bridge) rebuildNativeHistoryCall(item object) (object, error) {
 	}, nil
 }
 
-func (b *Bridge) translateHistory(input []any, pairedSearch map[int]bool) ([]any, error) {
+func (b *Bridge) translateHistory(input []any, pairedSearch map[int]object) ([]any, error) {
 	result := make([]any, 0, len(input))
 	seenCalls := make(map[string]bool)
 	var trigger any
@@ -454,10 +462,11 @@ func (b *Bridge) translateHistory(input []any, pairedSearch map[int]bool) ([]any
 		// Collect the revealed schemas through collectClientCatalog; send only a
 		// receipt through the history, so hidden definitions do not leak a second time.
 		id := text(item["call_id"])
-		if item["type"] == "tool_search_call" && item["execution"] == "client" {
+		clientSearch := item["type"] == "tool_search_call" && item["execution"] == "client"
+		if clientSearch {
 			item = maps.Clone(item)
 			apicompat.LowerClientToolSearchCall(item)
-		} else if pairedSearch[index] {
+		} else if _, paired := pairedSearch[index]; paired {
 			output := item["output"]
 			if output == nil {
 				output = "Tool search completed. Returned definitions are in the client tool catalog."
@@ -479,7 +488,7 @@ func (b *Bridge) translateHistory(input []any, pairedSearch map[int]bool) ([]any
 			continue
 		case "function_call", "custom_tool_call":
 			id := text(item["call_id"])
-			native := b.replay.getForCall(b.scope, id, item)
+			native := b.replay.getForCall(b.scope, id, item, clientSearch)
 			if err := b.replay.Err(); err != nil {
 				return nil, err
 			}
@@ -490,7 +499,7 @@ func (b *Bridge) translateHistory(input []any, pairedSearch map[int]bool) ([]any
 				if err != nil {
 					return nil, err
 				}
-				b.replay.put(b.scope, id, native, item)
+				b.replay.putCall(b.scope, id, native, item, clientSearch)
 				if err := b.replay.Err(); err != nil {
 					return nil, err
 				}
@@ -509,7 +518,10 @@ func (b *Bridge) translateHistory(input []any, pairedSearch map[int]bool) ([]any
 			}
 			id := text(item["call_id"])
 			if !seenCalls[id] {
-				native := b.replay.get(b.scope, id)
+				native := pairedSearch[index]
+				if native == nil {
+					native = b.replay.get(b.scope, id)
+				}
 				if err := b.replay.Err(); err != nil {
 					return nil, err
 				}
@@ -766,12 +778,16 @@ type replayWrite struct {
 	native, client object
 }
 
+func (b *Bridge) isClientSearchCall(call object) bool {
+	return call["type"] == "function_call" && call["name"] == "tool_search" && call["namespace"] == nil && clientToolSearch(b.tools["tool_search"].Catalog)
+}
+
 func (b *Bridge) rememberReplay(id string, native, client object) error {
 	if b.stagedReplays != nil {
 		*b.stagedReplays = append(*b.stagedReplays, replayWrite{id, native, client})
 		return nil
 	}
-	b.replay.put(b.scope, id, native, client)
+	b.replay.putCall(b.scope, id, native, client, b.isClientSearchCall(client))
 	return b.replay.Err()
 }
 
@@ -807,7 +823,7 @@ func (b *Bridge) translateResponse(response object) error {
 			if err != nil {
 				return err
 			}
-			if call["type"] == "function_call" && call["name"] == "tool_search" && call["namespace"] == nil && clientToolSearch(b.tools["tool_search"].Catalog) {
+			if b.isClientSearchCall(call) {
 				call = maps.Clone(call) // Keep the function-call identity staged for replay.
 				apicompat.RestoreClientToolSearchCall(call)
 				delete(call, "encrypted_function_args")
@@ -818,7 +834,7 @@ func (b *Bridge) translateResponse(response object) error {
 		}
 	}
 	for _, write := range writes {
-		b.replay.put(b.scope, write.id, write.native, write.client)
+		b.replay.putCall(b.scope, write.id, write.native, write.client, b.isClientSearchCall(write.client))
 		if err := b.replay.Err(); err != nil {
 			return err
 		}
