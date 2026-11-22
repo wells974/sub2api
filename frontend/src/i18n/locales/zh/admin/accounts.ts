@@ -1338,7 +1338,7 @@ export default {
       },
       fillRelatedModels: '同步最新支持模型',
       newModelSync: {
-        throttled: '该账号近期已发起过模型同步',
+        throttled: '该账号已发起过模型同步',
         enable: '创建后同步上游支持的模型',
         syncing: '正在同步模型…',
         saved: '已同步 {count} 个模型',

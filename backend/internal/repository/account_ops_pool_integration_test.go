@@ -67,6 +67,11 @@ func TestAccountOpsPoolAtomicConcurrentRestartAndRetries(t *testing.T) {
 		require.Equal(t, want, n)
 	}
 	count(1)
+	stale := c
+	stale.PoolNotifications = nil
+	require.NoError(t, r.SuppressDisabled(ctx, stale))
+	require.NoError(t, r.ObserveAccountOpsPool(ctx, service.ObserveAccountOpsPool))
+	count(1)
 	require.NoError(t, r.SuppressDisabled(ctx, c), "threshold suppression must leave pool events intact")
 	e, err := r.Claim(ctx)
 	require.NoError(t, err)
@@ -124,6 +129,40 @@ func TestAccountOpsPoolAtomicConcurrentRestartAndRetries(t *testing.T) {
 }
 
 func ptrPoolRepository[T any](v T) *T { return &v }
+
+func TestAccountOpsMutingQueuedBalanceLeavesPoolAndQuotaPending(t *testing.T) {
+	r, cfg, id := poolRepositoryFixture(t)
+	ctx := t.Context()
+	t.Cleanup(func() { cleanupOnce(t, id) })
+	cfg.BalanceLow, cfg.WeeklyQuota = true, true
+	svc := service.NewAccountOpsService(nil, r, nil)
+	require.NoError(t, svc.SaveConfig(ctx, cfg))
+	for _, kind := range []string{"balance_low", "weekly_quota"} {
+		require.NoError(t, r.Record(ctx, service.AccountOpsEvent{Kind: kind, AccountID: id}))
+	}
+	require.NoError(t, r.ObserveAccountOpsPool(ctx, service.ObserveAccountOpsPool))
+	cfg.BalanceLowDisabledAccountIDs = []int64{id}
+	require.NoError(t, svc.SaveConfig(ctx, cfg))
+	require.NoError(t, r.Record(ctx, service.AccountOpsEvent{Kind: "balance_low", AccountID: id}))
+	cfg.BalanceLowDisabledAccountIDs = []int64{}
+	require.NoError(t, svc.SaveConfig(ctx, cfg))
+	for kind, want := range map[string]string{"balance_low": "suppressed", "weekly_quota": "pending", "account_pool": "pending"} {
+		var state string
+		if kind == "account_pool" {
+			require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT state FROM account_ops_threshold_events WHERE kind=$1", kind).Scan(&state))
+		} else {
+			require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT state FROM account_ops_alerts WHERE account_id=$1 AND kind=$2", id, kind).Scan(&state))
+		}
+		require.Equal(t, want, state, kind)
+	}
+	var occurrences int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT occurrences FROM account_ops_alerts WHERE account_id=$1 AND kind='balance_low'", id).Scan(&occurrences))
+	require.Equal(t, 1, occurrences, "a queued observation from a stale gateway is ignored while muted")
+	require.NoError(t, r.Record(ctx, service.AccountOpsEvent{Kind: "balance_low", AccountID: id}))
+	var state string
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT state FROM account_ops_alerts WHERE account_id=$1 AND kind='balance_low'", id).Scan(&state))
+	require.Equal(t, "pending", state, "new observations after unmuting still notify")
+}
 
 func TestAccountOpsPoolReadsCredentialSourcesAndScheduling(t *testing.T) {
 	r, _, id := poolRepositoryFixture(t)

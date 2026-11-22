@@ -440,10 +440,9 @@ func (b *Bridge) rebuildNativeHistoryCall(item object) (object, error) {
 	}, nil
 }
 
-func (b *Bridge) translateHistory(input []any) ([]any, error) {
+func (b *Bridge) translateHistory(input []any, pairedSearch map[int]bool) ([]any, error) {
 	result := make([]any, 0, len(input))
 	seenCalls := make(map[string]bool)
-	searchCalls := make(map[string]bool)
 	var trigger any
 	for index, raw := range input {
 		var toolImages object
@@ -456,9 +455,9 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 		// receipt through the history, so hidden definitions do not leak a second time.
 		id := text(item["call_id"])
 		if item["type"] == "tool_search_call" && item["execution"] == "client" {
-			searchCalls[id] = true
-			item = object{"type": "function_call", "call_id": id, "name": "tool_search", "arguments": item["arguments"]}
-		} else if item["type"] == "tool_search_output" && searchCalls[id] {
+			item = maps.Clone(item)
+			apicompat.LowerClientToolSearchCall(item)
+		} else if pairedSearch[index] {
 			output := item["output"]
 			if output == nil {
 				output = "Tool search completed. Returned definitions are in the client tool catalog."

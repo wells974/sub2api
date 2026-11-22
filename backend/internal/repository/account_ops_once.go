@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"strconv"
 	"strings"
 	"time"
@@ -271,6 +272,17 @@ func (r *accountOpsRepository) PersistAccountOpsConfig(ctx context.Context, raw 
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES('account_ops_notifications_v1',$1,NOW()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=EXCLUDED.updated_at`, raw); err != nil {
 			return err
+		}
+		// Only the transaction saving the switches may retire a pool baseline.
+		// A periodic pass can hold a snapshot taken before another replica enabled it.
+		if err := suppressAccountOpsPool(ctx, tx, c); err != nil {
+			return err
+		}
+		if len(c.BalanceLowDisabledAccountIDs) > 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE account_ops_alerts SET state='suppressed',lease='',lease_until=NULL
+				WHERE kind='balance_low' AND account_id=ANY($1::bigint[]) AND state IN ('pending','failed','sending')`, pq.Array(c.BalanceLowDisabledAccountIDs)); err != nil {
+				return err
+			}
 		}
 		return r.suppressDisabled(ctx, tx, c)
 	}

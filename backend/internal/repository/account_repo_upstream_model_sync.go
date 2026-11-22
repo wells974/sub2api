@@ -12,8 +12,8 @@ import (
 var _ service.UpstreamModelMappingSyncRepository = (*accountRepository)(nil)
 
 // ClaimUpstreamModelSyncWindow is one SQL compare-and-set, shared by all
-// application instances. It records failed attempts too and does not change
-// scheduling, quotas, credentials, or the account revision.
+// application instances. Any previous claim consumes the account's initial
+// sync. Only polling can claim another window after the interval expires.
 func (r *accountRepository) ClaimUpstreamModelSyncWindow(ctx context.Context, accountID int64, now, next time.Time, automatic bool) (bool, error) {
 	if r == nil || r.sql == nil {
 		return false, errors.New("account repository SQL executor is not configured")
@@ -23,6 +23,7 @@ func (r *accountRepository) ClaimUpstreamModelSyncWindow(ctx context.Context, ac
 		SET extra = jsonb_set(COALESCE(extra, '{}'::jsonb), '{upstream_model_sync}',
 			jsonb_build_object('last_attempt_unix', $2::bigint, 'next_attempt_unix', $3::bigint), true)
 		WHERE id = $1 AND deleted_at IS NULL AND (NOT $4::boolean OR (status = 'active' AND schedulable = TRUE))
+			AND ($4::boolean OR jsonb_typeof(extra->'upstream_model_sync'->'last_attempt_unix') IS DISTINCT FROM 'number')
 			AND CASE WHEN jsonb_typeof(extra->'upstream_model_sync'->'next_attempt_unix') = 'number'
 				THEN (extra->'upstream_model_sync'->>'next_attempt_unix')::numeric
 				ELSE 0 END <= $2::bigint

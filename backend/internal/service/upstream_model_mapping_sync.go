@@ -95,6 +95,9 @@ func (s *AccountTestService) SyncUpstreamModelCatalogWithOptions(ctx context.Con
 			if err != nil {
 				return nil, newUpstreamModelSyncInternalError("Failed to read automatic model sync state", err)
 			}
+			if options.AfterCreate {
+				return skippedUpstreamModelSync("throttled", nil), nil
+			}
 			return skippedUpstreamModelSync("throttled", upstreamModelNextSyncAt(latest)), nil
 		}
 		nextSyncAt = &next

@@ -33,7 +33,7 @@ func (r *upstreamModelMappingRepoStub) UpdateExtra(context.Context, int64, map[s
 
 func (r *upstreamModelMappingRepoStub) ClaimUpstreamModelSyncWindow(_ context.Context, _ int64, now, next time.Time, automatic bool) (bool, error) {
 	r.claimCalls++
-	if now.Before(r.next) {
+	if now.Before(r.next) || (!automatic && !r.next.IsZero()) {
 		return false, nil
 	}
 	r.next = next
@@ -99,6 +99,9 @@ func TestNewOAuthModelSyncSharesPollingWindow(t *testing.T) {
 				result, err = svc.SyncUpstreamModelCatalogWithOptions(t.Context(), repo.account, repeated)
 				require.NoError(t, err)
 				require.Equal(t, "throttled", result.Skipped)
+				if repeated.AfterCreate {
+					require.Nil(t, result.NextSyncAt)
+				}
 			}
 			require.Len(t, upstream.requests, 1)
 			require.Equal(t, 1, repo.applyCalls)

@@ -10,6 +10,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestNativeToolSearchContinuationRepair(t *testing.T) {
+	source := onDemandSource()
+	source["tools"] = append(source["tools"].([]any), object{"type": "tool_search", "execution": "client"})
+	search := object{"type": "tool_search_call", "id": "tsc_lookup", "call_id": "lookup", "execution": "client", "arguments": object{"query": "read"}}
+	source["input"] = []any{search}
+	_, pending := mustPrepare(t, source, "cold", nil)
+	bad := repairResponse("bad", 2, 1, nativeCall(object{"name": "missing", "arguments": object{}}))
+	failure := unknownClientToolError{name: "missing"}
+	require.False(t, pending.canRepair(bad, failure), "a pending client search cannot restart the request")
+	require.False(t, pending.canRepairUnknownContinuation(bad, failure))
+
+	source["input"] = []any{search, object{"type": "tool_search_output", "call_id": "lookup", "tools": []any{catalogReadTool("string")}}}
+	_, b, stats := prepareOnDemand(t, source, nil, true)
+	require.True(t, stats.Active)
+	require.False(t, b.needsCatalogDisclosure(b.tools["read_file"]), "the matching result revealed this tool")
+	require.True(t, b.canRepairUnknownContinuation(bad, failure))
+	require.False(t, b.canRepair(bad, failure))
+	require.True(t, b.completedToolHistory["item/fc_lookup"], "recognize a reused item ID after the replay cache expires")
+
+	// The client may remove the search declaration once it has supplied the results.
+	source["tools"] = onDemandSource()["tools"]
+	_, next, stats := prepareOnDemand(t, source, nil, true)
+	require.True(t, stats.Active)
+	require.False(t, next.needsCatalogDisclosure(next.tools["read_file"]))
+	require.True(t, next.needsCatalogDisclosure(next.tools["optional_03"]))
+
+	source["input"] = []any{object{"type": "tool_search_output", "tools": []any{catalogReadTool("string")}}}
+	_, unpaired, stats := prepareOnDemand(t, source, nil, true)
+	require.True(t, stats.Active)
+	require.True(t, unpaired.needsCatalogDisclosure(unpaired.tools["read_file"]), "legacy catalog-only items still use normal BPS discovery")
+}
+
 func TestClientToolSearchRoundTrip(t *testing.T) {
 	source := testSource()
 	search := object{"type": "tool_search", "execution": "client", "parameters": object{"type": "object",

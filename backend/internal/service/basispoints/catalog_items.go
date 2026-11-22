@@ -56,10 +56,31 @@ func flattenCatalogAt(value any, namespace, location string) ([]catalogDeclarati
 	return result, nil
 }
 
+// Older clients can omit execution on the output. Infer it only from a
+// preceding client search with the same call ID, never from an unrelated result.
+func pairedClientSearchOutputs(items []any) map[int]bool {
+	calls := make(map[string]bool)
+	paired := make(map[int]bool)
+	for i, raw := range items {
+		item, _ := raw.(object)
+		id := text(item["call_id"])
+		if id == "" {
+			continue
+		}
+		switch item["type"] {
+		case "tool_search_call":
+			calls[id] = item["execution"] == "client"
+		case "tool_search_output":
+			paired[i] = calls[id] && (item["execution"] == nil || item["execution"] == "client")
+		}
+	}
+	return paired
+}
+
 // Current explicit declarations win; without them, newer replay declarations
 // replace inherited entries. Preserve first-seen order while choosing the last
 // replayed definition. Cache publication still follows the existing CAS boundary.
-func (b *Bridge) collectClientCatalog(source object, inherited bool) ([]any, error) {
+func (b *Bridge) collectClientCatalog(source object, inherited bool, pairedSearch map[int]bool) ([]any, error) {
 	catalog, err := b.collectTools(source["tools"], "")
 	if err != nil {
 		return nil, err
@@ -78,7 +99,7 @@ func (b *Bridge) collectClientCatalog(source object, inherited bool) ([]any, err
 		}
 		// The native client already revealed these definitions. Put the selected
 		// schema in the BPS prompt once, without requiring a second lookup.
-		clientResult := item["type"] == "tool_search_output" && item["execution"] == "client"
+		clientResult := item["type"] == "tool_search_output" && (item["execution"] == "client" || pairedSearch[index])
 		for _, declaration := range declarations {
 			if clientResult {
 				if b.clientSearchResults == nil {

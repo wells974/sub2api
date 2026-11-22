@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -206,31 +207,35 @@ func TestSchemaRepairRejectsChangedOrInvalidBatch(t *testing.T) {
 func TestSchemaRepairDeadlineAndCancellationKeepKnownUsage(t *testing.T) {
 	for _, cancelClient := range []bool{false, true} {
 		t.Run(map[bool]string{false: "deadline", true: "client_cancel"}[cancelClient], func(t *testing.T) {
-			_, b := mustPrepare(t, schemaRepairSource(), "schema", nil)
-			parent, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			ctx := WithSchemaRepair(parent, 10*time.Millisecond)
-			out, err := readSchemaStream(t, b, ctx, "", schemaResponse(schemaCall("bad", "lookup", object{})), func(ctx context.Context, _ object, _ error) (object, error) {
+			// Advance the deadline only after the mock upstream has received the
+			// correction. A timeout before submission has no second-round usage.
+			synctest.Test(t, func(t *testing.T) {
+				_, b := mustPrepare(t, schemaRepairSource(), "schema", nil)
+				parent, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				ctx := WithSchemaRepair(parent, 10*time.Millisecond)
+				out, err := readSchemaStream(t, b, ctx, "", schemaResponse(schemaCall("bad", "lookup", object{})), func(ctx context.Context, _ object, _ error) (object, error) {
+					if cancelClient {
+						cancel()
+					}
+					<-ctx.Done()
+					return object{"usage": object{"input_tokens": 4, "output_tokens": 1}}, ctx.Err()
+				})
 				if cancelClient {
-					cancel()
+					if !errors.Is(err, context.Canceled) {
+						t.Fatal(err)
+					}
+				} else if err != nil || !bytes.Contains(out, []byte("schema correction timed out")) || !bytes.Contains(out, []byte(`"input_tokens":14`)) {
+					t.Fatal(err, string(out))
 				}
-				<-ctx.Done()
-				return object{"usage": object{"input_tokens": 4, "output_tokens": 1}}, ctx.Err()
+				obs, usage := SchemaRepairSnapshot(ctx)
+				if !obs.Attempted || !bytes.Contains(usage, []byte(`"input_tokens":14`)) {
+					t.Fatal(obs, string(usage))
+				}
+				if bytes.Contains(out, []byte("event: response.function_call_arguments")) {
+					t.Fatal("canceled tool was dispatched")
+				}
 			})
-			if cancelClient {
-				if !errors.Is(err, context.Canceled) {
-					t.Fatal(err)
-				}
-			} else if err != nil || !bytes.Contains(out, []byte("schema correction timed out")) || !bytes.Contains(out, []byte(`"input_tokens":14`)) {
-				t.Fatal(err, string(out))
-			}
-			obs, usage := SchemaRepairSnapshot(ctx)
-			if !obs.Attempted || !bytes.Contains(usage, []byte(`"input_tokens":14`)) {
-				t.Fatal(obs, string(usage))
-			}
-			if bytes.Contains(out, []byte("event: response.function_call_arguments")) {
-				t.Fatal("canceled tool was dispatched")
-			}
 		})
 	}
 	_, b := mustPrepare(t, schemaRepairSource(), "schema", nil)

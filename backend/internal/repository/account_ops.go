@@ -33,8 +33,13 @@ func (r *accountOpsRepository) Record(ctx context.Context, e service.AccountOpsE
 		return err
 	}
 	groupID := accountOpsEventGroupID(&e)
+	// Serialize queued balance observations with a mute change. The originating
+	// gateway can still have an older configuration while this item waits.
 	_, err = r.db.ExecContext(ctx, `INSERT INTO account_ops_alerts(account_id,group_id,group_name,kind,account_name,signal,http_status,details,identity)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9) ON CONFLICT(group_id,kind) DO UPDATE SET
+ SELECT $1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9 WHERE NOT EXISTS (
+   SELECT 1 FROM (SELECT value FROM settings WHERE key='account_ops_notifications_v1' AND $4='balance_low' FOR SHARE) cfg
+   WHERE (cfg.value::jsonb->'balance_low_disabled_account_ids') @> jsonb_build_array($1::bigint)
+ ) ON CONFLICT(group_id,kind) DO UPDATE SET
  account_id=EXCLUDED.account_id,group_name=EXCLUDED.group_name,account_name=EXCLUDED.account_name,signal=EXCLUDED.signal,http_status=EXCLUDED.http_status,details=EXCLUDED.details,identity=CASE WHEN account_ops_alerts.state IN ('sending','pending') OR (account_ops_alerts.state='failed' AND (account_ops_alerts.attempts<3 OR account_ops_alerts.next_send_at>NOW())) THEN account_ops_alerts.identity ELSE EXCLUDED.identity END,last_seen=NOW(),occurrences=account_ops_alerts.occurrences+1,
  state=CASE WHEN account_ops_alerts.state IN ('sent','suppressed','failed','resolved') AND account_ops_alerts.next_send_at<=NOW() AND (account_ops_alerts.state<>'failed' OR account_ops_alerts.attempts>=3) THEN 'pending' ELSE account_ops_alerts.state END,
  deliveries=CASE WHEN account_ops_alerts.state IN ('sent','suppressed','failed','resolved') AND account_ops_alerts.next_send_at<=NOW() AND (account_ops_alerts.state<>'failed' OR account_ops_alerts.attempts>=3) THEN '{}'::jsonb ELSE account_ops_alerts.deliveries END,
@@ -135,9 +140,6 @@ func (r *accountOpsRepository) SuppressDisabled(ctx context.Context, c service.A
 	return tx.Commit()
 }
 func (r *accountOpsRepository) suppressDisabled(ctx context.Context, exec opsConfigExecutor, c service.AccountOpsConfig) error {
-	if err := suppressAccountOpsPool(ctx, exec, c); err != nil {
-		return err
-	}
 	if err := r.suppressTransitions(ctx, exec, c); err != nil {
 		return err
 	}

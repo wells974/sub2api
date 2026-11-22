@@ -163,27 +163,6 @@ func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, 
 		}
 		b.disallowParallel = !enabled
 	}
-	if items, ok := source["input"].([]any); ok {
-		for _, v := range items {
-			item, _ := v.(object)
-			if isCodexThreadDelegation(item) {
-				continue
-			}
-			if isTool(item) || strings.HasSuffix(text(item["type"]), "_call_output") {
-				b.hasToolHistory = true
-			}
-		}
-	}
-	var catalog []any
-	if choice != "none" {
-		catalog, err = b.collectClientCatalog(source, inherited)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	if err := b.resolveToolChoice(named); err != nil {
-		return nil, nil, err
-	}
 	var input []any
 	switch v := source["input"].(type) {
 	case string:
@@ -193,12 +172,28 @@ func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, 
 	default:
 		return nil, nil, fmt.Errorf("basispoints input must be text or a Responses item array")
 	}
-	translated, err := b.translateHistory(input)
+	pairedSearch := pairedClientSearchOutputs(input)
+	var catalog []any
+	if choice != "none" {
+		catalog, err = b.collectClientCatalog(source, inherited, pairedSearch)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if err := b.resolveToolChoice(named); err != nil {
+		return nil, nil, err
+	}
+	translated, err := b.translateHistory(input, pairedSearch)
 	if err != nil {
 		return nil, nil, err
 	}
-	if b.hasToolHistory {
-		b.completedToolHistory = b.completeToolHistory(translated)
+	for _, raw := range translated {
+		item, _ := raw.(object)
+		if isTool(item) || strings.HasSuffix(text(item["type"]), "_call_output") {
+			b.hasToolHistory = true
+			b.completedToolHistory = b.completeToolHistory(translated)
+			break
+		}
 	}
 	normalizeMessageFileImages(translated)
 	prologue := make([]any, 0, 2)

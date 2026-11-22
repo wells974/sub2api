@@ -41,17 +41,28 @@ func TestAutomaticModelSyncClaimIsSharedAndSurvivesStaleAccountEdit(t *testing.T
 	require.NoError(t, err)
 	require.True(t, claimed)
 
-	require.NoError(t, tx.Client().Account.UpdateOneID(account.ID).SetSchedulable(false).Exec(ctx))
 	start, next := now.Add(10*time.Minute), now.Add(15*time.Minute)
-	claimed, err = repo.ClaimUpstreamModelSyncWindow(ctx, account.ID, start, next, true)
-	require.NoError(t, err)
-	require.False(t, claimed, "background polling requires a schedulable account")
-	claimed, err = repo.ClaimUpstreamModelSyncWindow(ctx, account.ID, start, next, false)
-	require.NoError(t, err)
-	require.True(t, claimed, "an administrator may sync a newly created account before enabling it")
 	claimed, err = otherInstance.ClaimUpstreamModelSyncWindow(ctx, account.ID, start, next, false)
 	require.NoError(t, err)
-	require.False(t, claimed)
+	require.False(t, claimed, "a late creation callback must not repeat a sync already performed by polling")
+
+	newAccount := mustCreateAccount(t, tx.Client(), &service.Account{
+		Name: "new-oauth-sync", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive,
+	})
+	require.NoError(t, tx.Client().Account.UpdateOneID(newAccount.ID).SetSchedulable(false).Exec(ctx))
+	claimed, err = repo.ClaimUpstreamModelSyncWindow(ctx, newAccount.ID, start, next, true)
+	require.NoError(t, err)
+	require.False(t, claimed, "background polling requires a schedulable account")
+	claimed, err = repo.ClaimUpstreamModelSyncWindow(ctx, newAccount.ID, start, next, false)
+	require.NoError(t, err)
+	require.True(t, claimed, "an administrator may sync a newly created account before enabling it")
+	claimed, err = otherInstance.ClaimUpstreamModelSyncWindow(ctx, newAccount.ID, next, next.Add(5*time.Minute), false)
+	require.NoError(t, err)
+	require.False(t, claimed, "a repeated creation callback must remain a no-op after the window expires")
+	require.NoError(t, tx.Client().Account.UpdateOneID(newAccount.ID).SetSchedulable(true).Exec(ctx))
+	claimed, err = repo.ClaimUpstreamModelSyncWindow(ctx, newAccount.ID, next, next.Add(5*time.Minute), true)
+	require.NoError(t, err)
+	require.True(t, claimed, "scheduled refresh keeps its normal interval")
 }
 
 func TestApplyUpstreamModelsPreservesCredentialsAndInvalidatesScheduler(t *testing.T) {
