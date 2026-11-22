@@ -28,7 +28,7 @@ func (r *usageLogRepository) ReadUsageContentTimings(ctx context.Context, ids []
 			return nil, err
 		}
 		v := requesttiming.UnknownContentObservation()
-		var s requesttiming.Snapshot
+		s := requesttiming.Snapshot{BodyBytes: -1}
 		if len(raw) > 0 && json.Unmarshal(raw, &s) == nil {
 			v = requesttiming.DeriveContentObservation(s)
 		}

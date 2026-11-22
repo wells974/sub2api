@@ -216,6 +216,11 @@
           </button>
         </template>
 
+        <template #cell-request_body_bytes="{ row }">
+          <span v-if="row.content_timing?.request_body_bytes != null" class="whitespace-nowrap text-sm tabular-nums" :title="row.content_timing.request_body_bytes + ' B'">{{ formatMiB(row.content_timing.request_body_bytes) }}</span>
+          <span v-else class="text-sm text-gray-400 dark:text-gray-500">—</span>
+        </template>
+
         <template #cell-cost="{ row }">
           <button type="button" class="group relative text-left text-sm focus-visible:outline focus-visible:outline-primary-500"
             :aria-label="t('usage.costDetails')" :aria-expanded="tooltipVisible && tooltipData === row"
@@ -577,6 +582,7 @@ import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import { observerUsageContext } from './observerUsageContext'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { formatMiB } from './formatMiB'
 import { formatDateTime, formatReasoningEffort, reasoningEffortValuesEqual } from '@/utils/format'
 import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'

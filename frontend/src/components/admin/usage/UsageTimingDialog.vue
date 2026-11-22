@@ -79,6 +79,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
 import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import type { AdminUsageLog } from '@/types'
+import { formatMiB } from './formatMiB'
 import { formatDateTime } from '@/utils/format'
 import { formatUsageOutputTps } from '@/utils/usageTps'
 import { timingHealth, stageScale, TIMING_TEXT, TIMING_SURFACE, TIMING_BAR, type TimingHealth, type TimingScale } from '@/utils/requestTimingHealth'
@@ -96,7 +97,7 @@ const trace = computed(() => traces.value[selected.value])
 const label = (name: string) => t(`requestTiming.fields.${name}`)
 const ms = (value: number | null | undefined) => value == null || !Number.isFinite(value) || value < 0 ? t('requestTiming.missing') : value < 1 ? '<1ms' : value < 1000 ? `${value.toFixed(0)}ms` : `${(value / 1000).toFixed(2)}s`
 const contentMs = (value: number | null | undefined) => value == null || !Number.isFinite(value) || value < 0 ? '—' : ms(value)
-const bytes = (value: number) => value < 0 ? t('requestTiming.missing') : `${(value / 1048576).toFixed(3)} MiB`
+const bytes = (value: number) => value < 0 ? t('requestTiming.missing') : formatMiB(value)
 const yes = (value: boolean | null) => value == null ? t('requestTiming.missing') : t(value ? 'requestTiming.yes' : 'requestTiming.no')
 const delta = (events: Record<string, number>, start: string, end: string) => events[start] == null || events[end] == null || events[end] < events[start] ? undefined : events[end] - events[start]
 const duration = (name: string) => { const items = trace.value?.spans.filter(s => s.name === name); return items?.length ? items.reduce((n, s) => n + s.end_ms - s.start_ms, 0) : undefined }

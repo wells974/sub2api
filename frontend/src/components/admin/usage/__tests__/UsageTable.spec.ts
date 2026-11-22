@@ -1687,3 +1687,24 @@ describe('Free Fast screenshot arithmetic and history', () => {
   })
 
 })
+
+it('shows complete inbound body sizes and distinguishes missing data from zero', () => {
+  const wrapper = mount(UsageTable, {
+    props: {
+      data: [
+        { request_id: 'large', content_timing: { request_body_bytes: 87617997 } },
+        { request_id: 'empty', content_timing: { request_body_bytes: 0 } },
+        { request_id: 'legacy' },
+      ] as any,
+      columns: [{ key: 'request_body_bytes', label: 'Inbound body size' }],
+    },
+    global: { stubs: { DataTable: {
+      props: ['data'],
+      template: '<div><div v-for="row in data" :key="row.request_id" :data-row="row.request_id"><slot name="cell-request_body_bytes" :row="row" /></div></div>',
+    }, EmptyState: true, Icon: true } },
+  })
+  expect(wrapper.get('[data-row="large"]').text()).toBe('83.559 MiB')
+  expect(wrapper.get('[data-row="large"] span').attributes('title')).toBe('87617997 B')
+  expect(wrapper.get('[data-row="empty"]').text()).toBe('0.000 MiB')
+  expect(wrapper.get('[data-row="legacy"]').text()).toBe('—')
+})
