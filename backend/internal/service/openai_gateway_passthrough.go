@@ -895,6 +895,9 @@ func stripOpenAILegacyResponsesBeta(headers http.Header) {
 }
 
 func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, responseBody []byte) bool {
+	if isOpenAIUpstreamSessionBlocked(responseBody) {
+		return false
+	}
 	if isSIWCEligibilityRejection(account, statusCode, responseBody) {
 		return false
 	}
@@ -913,6 +916,9 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	// A definite missing model cools only this account/model pair. Let the
 	// handler try another candidate before committing a passthrough 404.
 	if account != nil && account.IsOpenAICompatible() && isUpstreamModelNotFoundError(statusCode, responseBody) {
+		return true
+	}
+	if isOpenAIWrappedConcurrency401(account, statusCode, responseBody) || (usesOpenAIOAuthRetryAffinity(account) && isOpenAIOAuthTransientServerStatus(statusCode)) {
 		return true
 	}
 	if account != nil && account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode) {
@@ -1052,7 +1058,7 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 		Detail:               upstreamDetail,
 		UpstreamResponseBody: upstreamDetail,
 	})
-	return s.newOpenAIAccountFailoverError(
+	return s.newOpenAIHTTPAccountFailoverError(
 		account,
 		resp.StatusCode,
 		resp.Header,
@@ -1600,6 +1606,11 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 		}
 	}
 	switch {
+	// Bare errors can precede a successful terminal. Only a terminal refusal
+	// with a recognized provider code grants the new quota failover behavior.
+	case gjson.GetBytes(payload, "type").String() == "response.failed" &&
+		(code == "usage_limit_reached" || code == "insufficient_quota" || code == "quota_exceeded"):
+		return http.StatusTooManyRequests
 	case strings.Contains(combined, "rate_limit"):
 		return http.StatusTooManyRequests
 	case strings.Contains(errType, "invalid_request"):
@@ -2048,6 +2059,14 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverErrorWithModel(
 		classificationHeaders = nil
 	}
 	failoverErr := s.newOpenAIAccountFailoverErrorWithClassificationHeaders(account, statusCode, headers, classificationHeaders, payload, message, shouldDisable, retryableOnSameAccount)
+	// A nil frame with this message is generated locally on a pre-output disconnect.
+	// Generic provider SSE errors also map to 502; that alone does not identify a disconnect.
+	if !shouldDisable && usesOpenAIOAuthRetryAffinity(account) && failoverErr.Scope == "" &&
+		((len(payload) == 0 && (strings.HasPrefix(message, "OpenAI stream disconnected before completion") ||
+			message == "OpenAI stream ended before a terminal event")) ||
+			(statusCode == http.StatusServiceUnavailable && failoverErr.RequestScopedTransient)) {
+		failoverErr.preserveOpenAIOAuthBinding()
+	}
 	failoverErr = failoverErr.WithGrokForbiddenPolicy(account)
 	if len(payload) > 0 && account != nil {
 		failoverErr.StreamFailedFrame = &OpenAIStreamFailedFrame{Platform: account.Platform, Payload: payload, Message: message}
