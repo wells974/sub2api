@@ -79,7 +79,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
 import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import type { AdminUsageLog } from '@/types'
-import { formatMiB } from './formatMiB'
+import { formatMiB, formatRequestBodySize } from './formatMiB'
 import { formatDateTime } from '@/utils/format'
 import { formatUsageOutputTps } from '@/utils/usageTps'
 import { timingHealth, stageScale, TIMING_TEXT, TIMING_SURFACE, TIMING_BAR, type TimingHealth, type TimingScale } from '@/utils/requestTimingHealth'
@@ -148,7 +148,7 @@ const groups = computed(() => {
     { title: t('requestTiming.inbound'), rows: [
       timed('body_read_start', e.body_read_start, 'neutral'), timed('body_first_wait', delta(e, 'body_read_start', 'body_first_byte')),
       timed('body_receive', delta(e, 'body_first_byte', 'body_received')), timed('body_read_ms', e.body_read_start == null ? undefined : d.body_read_ms),
-      row('body_bytes', bytes(d.body_bytes)), row('body_rate', e.body_read_start == null ? t('requestTiming.missing') : d.body_read_ms < 1 ? t('requestTiming.health.readTooBrief') : `${(d.body_bytes / 1048576 / (d.body_read_ms / 1000)).toFixed(2)} MiB/s`),
+      row('body_bytes', Number.isSafeInteger(d.body_bytes) && d.body_bytes >= 0 ? formatRequestBodySize(d.body_bytes) : t('requestTiming.missing')), row('body_rate', e.body_read_start == null ? t('requestTiming.missing') : d.body_read_ms < 1 ? t('requestTiming.health.readTooBrief') : `${(d.body_bytes / 1048576 / (d.body_read_ms / 1000)).toFixed(2)} MiB/s`),
       flag('body_complete', e.body_read_start == null ? null : d.body_complete, true)
     ] },
     { title: t('requestTiming.internal'), rows: ['api_key_auth', 'model_allowlist', 'composite_routing', 'handler_body_read', 'security_audit', 'billing_check', 'user_queue', 'account_selection', 'account_queue', 'upstream_credentials', 'build_upstream_request', 'handler'].map(name => timed(name, duration(name), stageScale(name))) },

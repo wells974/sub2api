@@ -1693,6 +1693,9 @@ it('shows complete inbound body sizes and distinguishes missing data from zero',
     props: {
       data: [
         { request_id: 'large', content_timing: { request_body_bytes: 87617997 } },
+        { request_id: 'one', content_timing: { request_body_bytes: 1 } },
+        { request_id: 'small', content_timing: { request_body_bytes: 1023 } },
+        { request_id: 'boundary', content_timing: { request_body_bytes: 1024 } },
         { request_id: 'empty', content_timing: { request_body_bytes: 0 } },
         { request_id: 'legacy' },
       ] as any,
@@ -1705,6 +1708,10 @@ it('shows complete inbound body sizes and distinguishes missing data from zero',
   })
   expect(wrapper.get('[data-row="large"]').text()).toBe('83.559 MiB')
   expect(wrapper.get('[data-row="large"] span').attributes('title')).toBe('87617997 B')
-  expect(wrapper.get('[data-row="empty"]').text()).toBe('0.000 MiB')
+  expect(wrapper.get('[data-row="one"]').text()).toBe('<1 KiB')
+  expect(wrapper.get('[data-row="small"]').text()).toBe('<1 KiB')
+  expect(wrapper.get('[data-row="small"] span').attributes('title')).toBe('1023 B')
+  expect(wrapper.get('[data-row="boundary"]').text()).toBe('0.001 MiB')
+  expect(wrapper.get('[data-row="empty"]').text()).toBe('0 B')
   expect(wrapper.get('[data-row="legacy"]').text()).toBe('—')
 })
