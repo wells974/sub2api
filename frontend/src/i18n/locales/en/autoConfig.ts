@@ -1,4 +1,20 @@
 export default {
+  groupFallback: {
+    title: 'Group fallback',
+    hint: 'Each group is checked independently. Enable its selected API key accounts when all of its OAuth accounts are unavailable or its metric drops below the threshold.',
+    enable: 'Enable group fallback',
+    group: 'Monitored group',
+    save: 'Save group fallback',
+    rules: 'Group rules',
+    choose: 'Select a group',
+    noGroups: 'No groups available',
+    empty: 'No group rules added yet',
+    add: 'Add rule',
+    unavailable: 'Unavailable group',
+    reload: 'Reload configuration',
+    conflict: 'Configuration changed. Reload before saving.',
+    shared: 'Disable activated backup accounts manually. Enabling an account makes it schedulable in every group it belongs to.',
+  },
   apikeyDisposition: {
     timerSource: 'OAuth initial configuration action',
     superseded: 'Account changed or the paired close did not execute; automatic action skipped',

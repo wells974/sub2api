@@ -7,6 +7,7 @@ import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
 import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import { useNewFeatureNoticeStore } from '@/stores/newFeatureNotices'
 import { getAutoConfig, saveAutoConfig, type AutoConfig } from '@/api/admin/autoConfig'
+import { getGroupFallback, getGroupFallbackOptions, saveGroupFallback } from '@/api/admin/groupFallback'
 import { listQualityPlans } from '@/api/admin/accountQuality'
 import { getAll, list as listGroups } from '@/api/admin/groups'
 import { list as listAccounts } from '@/api/admin/accounts'
@@ -27,6 +28,7 @@ vi.mock('@/components/admin/operations/SmartOpsNav.vue', () => ({ default: { tem
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string, params?: { count?: number }) => params?.count === undefined ? key : `${key} ${params.count}` }) }))
 vi.mock('@/api/client', () => ({ apiClient: { get: vi.fn(), put: vi.fn() } }))
 vi.mock('@/api/admin/autoConfig', async importOriginal => ({ ...await importOriginal<typeof import('@/api/admin/autoConfig')>(), getAutoConfig: vi.fn(), saveAutoConfig: vi.fn() }))
+vi.mock('@/api/admin/groupFallback', () => ({ getGroupFallback: vi.fn(), getGroupFallbackOptions: vi.fn(), saveGroupFallback: vi.fn() }))
 vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn() }))
 vi.mock('@/api/admin/groups', () => ({ getAll: vi.fn(), list: vi.fn() }))
 vi.mock('@/api/admin/accounts', () => ({ list: vi.fn() }))
@@ -41,6 +43,28 @@ beforeEach(() => {
  vi.mocked(getAll).mockResolvedValue([{ id: 5, name: 'OpenAI test', platform: 'openai', status: 'active' }, { id: 6, name: 'Anthropic test', platform: 'anthropic', status: 'active' }] as Group[])
 })
 describe('AutoConfigView', () => {
+ it('edits group fallback directly above BPS with an independent save', async () => {
+  state.auth.isAdmin = true
+  const groupConfig = { enabled: false, revision: 'v1', rules: [] }
+  vi.mocked(getGroupFallback).mockResolvedValue({ config: groupConfig, status: {} })
+  vi.mocked(getGroupFallbackOptions).mockResolvedValue([])
+  vi.mocked(saveGroupFallback).mockImplementation(async c => c)
+  const w = mount(AutoConfigView)
+  await flushPromises()
+  const panel = w.get('#group-fallback')
+  const bps = w.get('[data-testid="bps-defaults-card"]')
+  expect(panel.element.nextElementSibling).toBe(bps.element.closest('form'))
+  expect(bps.element.closest('fieldset')).toBe(panel.element.nextElementSibling?.firstElementChild)
+  expect(panel.element.closest('form')).toBeNull()
+  await w.get('[data-testid="concurrency"]').setValue(12)
+  await panel.get('[role="switch"]').setValue(true)
+  await panel.get('form').trigger('submit')
+  await flushPromises()
+  expect(saveGroupFallback).toHaveBeenCalledWith({ enabled: true, revision: 'v1', rules: [] })
+  expect(saveAutoConfig).not.toHaveBeenCalled()
+  expect(w.get<HTMLInputElement>('[data-testid="concurrency"]').element.value).toBe('12')
+  w.unmount()
+ })
  it('places fallback handling beside degradation handling and saves its controls independently of initial configuration', async () => {
   vi.mocked(listAccounts).mockResolvedValueOnce({ items: [{ id: 71, name: 'Fallback fixture', platform: 'openai', type: 'apikey', status: 'active', schedulable: false, parent_account_id: null }] as any, page: 1, page_size: 100, pages: 1, total: 1 })
   const w = mount(AutoConfigView); await flushPromises()

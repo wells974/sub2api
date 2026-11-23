@@ -7,12 +7,15 @@
       <p v-if="notice" role="status" class="text-emerald-600">{{ notice }}</p>
       <p v-if="loading">{{ t('common.loading') }}</p>
       <button v-if="!draft && !loading" class="btn btn-secondary" @click="load">{{ t('autoConfig.retry') }}</button>
-      <form v-if="draft" class="space-y-5" @submit.prevent="save">
+      <form v-if="draft" ref="handlingForm" class="space-y-5" @submit.prevent="save">
         <p v-if="draft.runtime_blocked" role="alert" class="rounded-xl bg-amber-50 p-4 text-amber-800">{{ t('autoConfig.blocked') }}</p>
         <div class="grid min-w-0 gap-5 lg:grid-cols-2" data-testid="oauth-handling-panels">
           <fieldset :disabled="saving" class="min-w-0"><OAuthDegradationCard v-model="draft.degradation_action" :groups="groups" :user-id="auth.user?.id" /></fieldset>
           <fieldset :disabled="saving" class="min-w-0"><OpenAIAPIKeyFallbackCard ref="fallbackCard" v-model="draft.openai_apikey_fallback" :groups="groups" :user-id="auth.user?.id" :status="fallbackStatus" :status-loading="fallbackStatusLoading" :status-failed="fallbackStatusFailed" @refresh-status="refreshFallbackStatus" /></fieldset>
         </div>
+      </form>
+      <GroupFallbackPanel v-if="draft" />
+      <form v-if="draft" ref="settingsForm" class="space-y-5" @submit.prevent="save">
         <fieldset :disabled="saving" class="min-w-0"><BPSDefaultsCard v-model="draft.excel_bps" :groups="groups" /></fieldset>
         <fieldset :disabled="saving" class="min-w-0">
           <section class="card space-y-5" data-testid="model-billing">
@@ -145,6 +148,7 @@ import { oauthAPIKeyDispositionPayload, oauthAPIKeyDispositionError, type OAuthA
 import OpenAIAPIKeyFallbackCard from '@/components/admin/operations/OpenAIAPIKeyFallbackCard.vue'
 import { openaiAPIKeyFallbackPayload, openaiAPIKeyFallbackError, type OpenAIAPIKeyFallbackConfig, type OpenAIAPIKeyFallbackStatus } from '@/utils/openaiAPIKeyFallback'
 import { oauthDegradationPayload, oauthDegradationError, type OAuthDegradationConfig } from '@/utils/oauthDegradation'
+import GroupFallbackPanel from '@/components/admin/operations/GroupFallbackPanel.vue'
 import BPSDefaultsCard from '@/components/admin/operations/BPSDefaultsCard.vue'
 import OpenAITwoFAAdmissionCard from '@/components/admin/operations/OpenAITwoFAAdmissionCard.vue'
 import { defaultOpenAITwoFAAdmissionConfig, openaiTwoFAAdmissionError, type OpenAITwoFAAdmissionConfig } from '@/utils/openaiTwoFAAdmission'
@@ -165,6 +169,8 @@ const DEFAULT_DISABLE_SCHEDULING_429_7D_THRESHOLD_PERCENT = 98
 const draft = ref<(AutoConfig & { apikey_disposition: OAuthAPIKeyDispositionConfig; openai_apikey_fallback: OpenAIAPIKeyFallbackConfig; openai_disable_scheduling_on_429_7d_threshold_percent: number; degradation_action: OAuthDegradationConfig; openai_ws_mode: OpenAIWSMode; openai_ws_sse_acceleration: boolean; openai_two_fa_admission: OpenAITwoFAAdmissionConfig; excel_bps: ExcelBPSDefaults; model_billing: ModelBillingConfig; model_mappings: OAuthModelMappingRule[] }) | null>(null), groups = ref<Group[]>([])
 const modelBillingGroups = ref<Group[]>([]), modelBillingGroupsLoading = ref(true), modelBillingGroupsFailed = ref(false)
 const loading = ref(false), saving = ref(false), error = ref(''), notice = ref('')
+const handlingForm = ref<HTMLFormElement | null>(null)
+const settingsForm = ref<HTMLFormElement | null>(null)
 const dispositionCard = ref<InstanceType<typeof OAuthAPIKeyDispositionCard> | null>(null)
 const fallbackCard = ref<InstanceType<typeof OpenAIAPIKeyFallbackCard> | null>(null)
 const fallbackStatus = ref<OpenAIAPIKeyFallbackStatus | null>(null), fallbackStatusLoading = ref(false), fallbackStatusFailed = ref(false)
@@ -243,6 +249,7 @@ async function save() {
  if (!Number.isFinite(shutdownThreshold) || shutdownThreshold < 0 || shutdownThreshold > 100) { error.value = t('autoConfig.disableScheduling429.invalidThreshold'); return }
  const costMultiplier = c.cost_multiplier ?? 0.07
  if (c.enabled && !c.group_ids.length || c.upgrade_enabled && !c.upgrade_group_ids.length || !Number.isFinite(costMultiplier) || costMultiplier < 0 || costMultiplier > 1000000 || [...initialFields, ...upgradeFields].some(f => !Number.isInteger(c[f.key]) || c[f.key] < ('min' in f ? f.min : 1) || c[f.key] > ('max' in f ? f.max : 10000))) { error.value = t('autoConfig.invalid'); return }
+ if (!handlingForm.value?.reportValidity() || !settingsForm.value?.reportValidity()) return
  const v = generation; saving.value = true; error.value = ''; notice.value = ''
  try { const { runtime_blocked: _blocked, openai_apikey_fallback_status: _fallbackStatus, ...payload } = c; const result = await saveAutoConfig({ ...payload, cost_multiplier: costMultiplier, openai_apikey_fallback: openaiAPIKeyFallbackPayload(c.openai_apikey_fallback), model_mappings: oauthModelMappingsPayload(c.model_mappings), model_billing: modelBillingPayload(c.model_billing), excel_bps: excelBPSDefaultsPayload(c.excel_bps) }); if (validGeneration(v)) { draft.value = { ...result, apikey_disposition: oauthAPIKeyDispositionPayload(result.apikey_disposition), degradation_action: oauthDegradationPayload(result.degradation_action), openai_apikey_fallback: openaiAPIKeyFallbackPayload(result.openai_apikey_fallback), openai_ws_mode: result.openai_ws_mode ?? OPENAI_WS_MODE_CTX_POOL, openai_ws_sse_acceleration: result.openai_ws_sse_acceleration ?? false, openai_totp_rotate_on_429: result.openai_totp_rotate_on_429 ?? false, openai_disable_scheduling_on_429: result.openai_disable_scheduling_on_429 ?? false, openai_disable_scheduling_on_429_7d_threshold_percent: result.openai_disable_scheduling_on_429_7d_threshold_percent ?? DEFAULT_DISABLE_SCHEDULING_429_7D_THRESHOLD_PERCENT, openai_two_fa_admission: result.openai_two_fa_admission ?? defaultOpenAITwoFAAdmissionConfig(), cost_multiplier: result.cost_multiplier ?? 0.07, model_mappings: result.model_mappings ?? defaultOAuthModelMappings(result.platform), model_billing: modelBillingPayload(result.model_billing ?? defaultModelBillingConfig()), excel_bps: result.excel_bps ?? defaultExcelBPSDefaults() }; if (result.openai_apikey_fallback_status) fallbackStatus.value = result.openai_apikey_fallback_status; selectedQualityRule.value = result.quality_rule ? 'saved' : ''; notice.value = t('autoConfig.saved'); historyRefreshKey.value++ } }
  catch { if (validGeneration(v)) error.value = t('autoConfig.saveFailed') }

@@ -1,4 +1,20 @@
 export default {
+  groupFallback: {
+    title: '分组兜底',
+    hint: '每组独立检查。组内 OAuth 账号全部不可调用，或该组的监控指标低于阈值时，开启本规则选定的 API Key 账号。',
+    enable: '启用分组兜底',
+    group: '监听分组',
+    save: '保存分组兜底',
+    rules: '分组规则',
+    choose: '选择分组',
+    noGroups: '暂无可选分组',
+    empty: '尚未添加分组规则',
+    add: '添加规则',
+    unavailable: '分组不可用',
+    reload: '重新加载配置',
+    conflict: '配置已被修改，请重新加载后再保存。',
+    shared: '备用账号开启后需手动关闭。一个账号若属于多个分组，开启调度会对这些分组同时生效。',
+  },
   apikeyDisposition: {
     timerSource: 'OAuth 首次配置自动处置',
     superseded: '账号已变更或配对关闭未执行，已跳过自动处置',

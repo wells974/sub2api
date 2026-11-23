@@ -223,6 +223,10 @@ func (s *AccountOpsService) start(runSharedJobs bool) {
 		s.startOAuth429Observations(ctx, repo)
 	}
 	s.fallbackSharedJobs.Store(runSharedJobs)
+	if store, ok := s.repo.(groupFallbackStore); ok && runSharedJobs && s.accounts != nil {
+		s.wg.Add(1)
+		go s.runGroupFallback(ctx, store)
+	}
 	s.wg.Add(2)
 	go s.runAutoConfig(ctx)
 	go func() {
