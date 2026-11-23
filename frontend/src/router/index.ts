@@ -608,6 +608,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/admin/controlled-experiments', name: 'AdminControlledExperiments', component: () => import('@/views/admin/ControlledExperimentsView.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: 'Controlled experiments', titleKey: 'controlledExperiments.title', descriptionKey: 'controlledExperiments.description' } },
   { path: '/admin/pelican-tests', name: 'AdminPelicanTests', component: () => import('@/views/admin/PelicanTestsView.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: 'Pelican Showcase', titleKey: 'pelicanTests.title', descriptionKey: 'pelicanTests.description' } },
   { path: '/admin/token-guard-v2', name: 'AdminTokenGuardV2', component: () => import('@/views/admin/ops/TokenGuardV2View.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: 'Credential Operations', titleKey: 'tokenGuardV2.title', descriptionKey: 'tokenGuardV2.description' } },
+  { path: '/admin/notification-channels', name: 'AdminNotificationChannels', component: () => import('@/views/admin/NotificationChannelsView.vue'), meta: { requiresAuth: true, requiresAdmin: true, titleKey: 'accountOps.channelsPage' } },
   { path: '/admin/account-ops', redirect: to => ({ path: '/admin/channel-config', query: { ...to.query, panel: 'accounts' }, hash: to.hash }), meta: { requiresAuth: true, requiresAdmin: true } },
   {
     path: '/admin/account-quality',

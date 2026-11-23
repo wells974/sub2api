@@ -888,6 +888,7 @@ const adminNavItems = computed((): NavItem[] => {
       { path: '/admin/priority-scheduling', label: t('priorityScheduling.title'), icon: AccountOpsIcon },
       { path: '/admin/qqbot/overview', label: t('qqbot.title'), icon: AccountOpsIcon, noticeId: NEW_FEATURE_NOTICES.qqCommunity },
       { path: '/admin/channel-config', label: t('channelConfig.title'), icon: PriceTagIcon, noticeId: NEW_FEATURE_NOTICES.channelConfig },
+      ...(authStore.isAdmin ? [{ path: '/admin/notification-channels', label: t('accountOps.channelsPage'), icon: BellIcon }] : []),
       { path: '/admin/account-quality', label: t('qualityOps.title'), icon: QualityOpsIcon, noticeId: NEW_FEATURE_NOTICES.qualityRetestRest },
       { path: '/admin/controlled-experiments', label: t('controlledExperiments.title'), icon: QualityOpsIcon },
       { path: '/admin/token-guard-v2', label: t('tokenGuardV2.title'), icon: CredentialOpsIcon },

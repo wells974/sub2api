@@ -1,4 +1,19 @@
 export default {
+  "patrol": {
+    "title": "Patrol notifications",
+    "enabled": "Notify after each selected rule finishes",
+    "channels": "Send through the enabled notification channels.",
+    "noChannels": "Configure a channel to enable notifications.",
+    "quiet": "Daily quiet hours",
+    "start": "From",
+    "end": "Until",
+    "zone": "Time zone: {zone}. Checks continue during quiet hours. Skipped notifications are not resent.",
+    "rules": "Rules to receive",
+    "empty": "No quality rules yet.",
+    "select": "Configure a channel and select at least one rule.",
+    "hours": "Choose different start and end times.",
+    "loadFailed": "Could not load patrol settings."
+  },
   "ciallo": {
     "ruleHint": "Run ciallo on the configured models, effort and schedule. The built-in judge matches a complete reply starting with a recognized greeting and emoticon. Outcomes feed the configured action. Select observation only to collect results without applying an action.",
     "title": "Ciallo test",

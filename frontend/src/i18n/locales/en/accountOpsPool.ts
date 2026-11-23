@@ -1,6 +1,6 @@
 export default {
   title: 'Account pool notifications',
-  description: 'Uses the enabled channels above and the Enable account alerts master switch. Checks about every 15 seconds and notifies only on observed changes.',
+  description: 'Uses the channels enabled in Notification settings and the Enable account alerts master switch. Checks about every 15 seconds and notifies only on observed changes.',
   enabled: 'Enable pool notifications',
   states: 'Account errors, invalid credentials, failed re-logins and recovery',
   counts: 'Available / total count changes (also sends the initial count)',

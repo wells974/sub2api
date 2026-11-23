@@ -53,7 +53,7 @@ func ValidateAccountOpsConfig(c AccountOpsConfig) (err error) {
 	return nil
 }
 func (c AccountOpsConfig) Allows(kind string) bool {
-	return c.Enabled && c.hasDestination() && ((kind == AccountOpsPoolKind && c.PoolEnabled()) || (kind == "balance_low" && c.BalanceLow) || (kind == "weekly_quota" && c.WeeklyQuota) || (kind == "balance_threshold" && c.hasThreshold()) || (kind == "quota_threshold" && c.hasQuotaThreshold()))
+	return c.Enabled && c.hasDestination() && (kind == qualityPatrolKind || (kind == AccountOpsPoolKind && c.PoolEnabled()) || (kind == "balance_low" && c.BalanceLow) || (kind == "weekly_quota" && c.WeeklyQuota) || (kind == "balance_threshold" && c.hasThreshold()) || (kind == "quota_threshold" && c.hasQuotaThreshold()))
 }
 
 type AccountOpsEvent struct {
@@ -252,6 +252,13 @@ func (s *AccountOpsService) start(runSharedJobs bool) {
 					s.evaluateOpenAIAPIKeyFallback(ctx)
 				}
 				if s.refreshConfig(ctx, runSharedJobs) && runSharedJobs {
+					if repo, ok := s.repo.(qualityPatrolRepository); ok {
+						query, stop := context.WithTimeout(ctx, 5*time.Second)
+						if err := repo.EnqueuePatrolRounds(query); err != nil {
+							s.failures.Add(1)
+						}
+						stop()
+					}
 					s.scanAccountPool(ctx)
 					s.scanBalances(ctx)
 					s.deliver(ctx)
@@ -291,7 +298,7 @@ func (s *AccountOpsService) refreshConfig(ctx context.Context, reconcileGroups b
 		s.failures.Add(1)
 		return false
 	}
-	return c.Enabled
+	return true
 }
 func (s *AccountOpsService) deliver(ctx context.Context) {
 	for i := 0; i < 10 && ctx.Err() == nil; i++ {

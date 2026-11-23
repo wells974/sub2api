@@ -1,6 +1,7 @@
 import pool from './accountOpsPool'
 
 export default {
+  "channelsPage": "通知配置",
   pool,
   "account_pool": "全局号池状态",
   "accountBalanceNotification": "请求余额不足通知",
@@ -143,7 +144,7 @@ export default {
     "unknown": "尚无数据"
   },
   "recordsTab": "提醒记录",
-  "settingsTab": "规则与通道",
+  "settingsTab": "提醒规则",
   "pageSections": "账号运维页签",
   "recordsOnceHint": "每轮预警与确认恢复各记录一次，查看当时数值和发送结果。",
   "recordsEmptyHint": "配置通道和账号规则后，这里会记录进入预警、确认恢复及请求失败提醒。",

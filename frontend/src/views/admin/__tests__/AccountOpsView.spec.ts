@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import { reactive } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import AccountOpsView from '../AccountOpsView.vue'
+import ChannelsView from '../NotificationChannelsView.vue'
 import AccountOpsGroupDialog from '@/components/admin/operations/AccountOpsGroupDialog.vue'
 import { saveAccountOpsPool } from '@/api/admin/accountOpsPool'
 import type { AccountOpsGroup, AccountOpsThresholdAccount } from '@/api/admin/accountOps'
@@ -19,6 +20,7 @@ const config = { enabled: false, recipient: '', balance_low: true, weekly_quota:
 const settings = () => ({ config: { ...config }, smtp_configured: true, dropped_signals: 0, storage_failures: 0, encryption_key_configured: true })
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes }); return { promise, resolve } }
 const create = () => mount(AccountOpsView, { global: { plugins: [createPinia()], stubs: { teleport: true } } })
+const createChannels = () => mount(ChannelsView, { global: { plugins: [createPinia()], stubs: { teleport: true } } })
 const pollingGroups = (): AccountOpsGroup[] => [
   { id: 'manual-alpha', name: 'Alpha', default_name: 'Alpha', provider: 'sub2api', site: 'https://alpha.example', mode: 'manual', account_ids: [1] },
   { id: 'manual-beta', name: 'Beta', default_name: 'Beta', provider: 'newapi', site: 'https://beta.example', mode: 'manual', account_ids: [2, 60, 998] },
@@ -359,8 +361,7 @@ describe('account operations tabs and independent saves', () => {
     wrapper.unmount()
   })
   it('adds and removes an email channel without posting the global switch or failure rules', async () => {
-    const wrapper = create(); await flushPromises()
-    await wrapper.get('[data-testid="account-ops-tab-settings"]').trigger('click'); await flushPromises()
+    const wrapper = createChannels(); await flushPromises()
     expect(wrapper.find('[data-testid="account-ops-email-channel"]').exists()).toBe(false)
     await wrapper.get('[data-testid="account-ops-add-channel"]').trigger('click'); await flushPromises()
     await wrapper.get('[data-testid="add-channel-email"]').trigger('click'); await flushPromises()
@@ -378,8 +379,7 @@ describe('account operations tabs and independent saves', () => {
   })
   it('keeps email addition available at the robot limit without an encryption key', async () => {
     vi.mocked(getAccountOpsSettings).mockResolvedValue({ ...settings(), encryption_key_configured: false, config: { ...config, webhooks: Array.from({ length: 5 }, (_, i) => ({ id: `bot-${i}`, provider: 'wecom' as const, enabled: true, url_configured: true })) } })
-    const wrapper = create(); await flushPromises()
-    await wrapper.get('[data-testid="account-ops-tab-settings"]').trigger('click'); await flushPromises()
+    const wrapper = createChannels(); await flushPromises()
     await wrapper.get('[data-testid="account-ops-add-channel"]').trigger('click'); await flushPromises()
     expect(wrapper.get('[data-testid="add-channel-email"]').attributes('disabled')).toBeUndefined()
     expect(wrapper.get('[data-testid="add-channel-webhook"]').attributes('disabled')).toBeDefined()
@@ -388,7 +388,7 @@ describe('account operations tabs and independent saves', () => {
     wrapper.unmount()
   })
   it('offers only email and Webhook and opens an automatic Webhook editor', async () => {
-    const wrapper = create(); await flushPromises()
+    const wrapper = createChannels(); await flushPromises()
     await wrapper.get('[data-testid="account-ops-add-channel"]').trigger('click'); await flushPromises()
     expect(wrapper.findAll('[data-testid^="add-channel-"]')).toHaveLength(2)
     await wrapper.get('[data-testid="add-channel-webhook"]').trigger('click'); await flushPromises()
@@ -490,7 +490,11 @@ describe('account operations tabs and independent saves', () => {
     const event = { id: 'named-event', account_id: 1, account_name: 'key', kind: 'balance_threshold', signal: 'balance_threshold', http_status: 0, first_seen: '2026-10-07T12:00:00Z', last_seen: '2026-10-07T12:00:00Z', occurrences: 1, state: 'sent', last_sent_at: null, next_send_at: '', attempts: 1, deliveries: { 'robot:named:revision': { provider: 'custom', name: '当时的通知群', status: 'sent', attempts: 1 } } }
     vi.mocked(getAccountOpsEvents).mockResolvedValue({ items: [event], has_more: false } as any)
     const wrapper = create(); await flushPromises()
-    expect(wrapper.text()).toContain('夜班通知')
+    const channels = createChannels(); await flushPromises()
+    expect(channels.text()).toContain('夜班通知')
+    expect(channels.get('code').text()).toContain('"body":"{{message}}"')
+    expect(channels.get('code').text()).not.toContain('device_key')
+    channels.unmount()
     await wrapper.get('[data-testid="account-ops-tab-records"]').trigger('click')
     expect(wrapper.get('[data-testid="delivery-details-list"]').text()).toContain('当时的通知群')
     wrapper.unmount()

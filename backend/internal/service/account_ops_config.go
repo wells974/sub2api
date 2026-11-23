@@ -54,7 +54,8 @@ type AccountOpsQuotaRule struct {
 	Window           string  `json:"window"`
 }
 type AccountOpsDetails struct {
-	Pool *AccountOpsPoolDetails `json:"pool,omitempty"`
+	Patrol *QualityPatrolCounts   `json:"patrol,omitempty"`
+	Pool   *AccountOpsPoolDetails `json:"pool,omitempty"`
 
 	UsedPercent      *float64   `json:"used_percent,omitempty"`
 	ThresholdPercent *float64   `json:"threshold_percent,omitempty"`

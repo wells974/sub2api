@@ -104,55 +104,12 @@
           </template>
         </AccountOpsRuleList>
         <AccountOpsPoolSettings :config="remote.config" :disabled="mutating || globalSaving" @saving="globalSaving = $event" @saved="acceptConfig" @error="app.showError" />
-        <details :open="!remote.config.recipient && !remote.config.webhooks?.length" class="rounded-xl border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900"
-          data-testid="account-ops-channels">
-          <summary class="cursor-pointer px-5 py-4 text-sm font-semibold">{{ t('accountOps.notificationChannels') }}<span class="ml-3 text-xs font-normal text-gray-500">{{ remote.config.email_name || remote.config.recipient || t('accountOps.channelSummaryHint') }}</span></summary>
-          <div class="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-3">
-            <div v-if="remote.config.recipient" class="rounded-lg border border-gray-200 p-4 dark:border-dark-700"
-              data-testid="account-ops-email-channel">
-              <div class="flex items-center justify-between"><span
-                  class="min-w-0 truncate text-sm font-medium" :title="remote.config.email_name || t('accountOps.providers.email')">{{ remote.config.email_name || t('accountOps.providers.email') }}</span><span
-                  class="text-xs text-gray-500">{{ t(remote.config.recipient ? 'accountOps.channelConfigured' : 'accountOps.channelUnconfigured') }}</span>
-              </div>
-              <p class="mt-2 truncate text-xs text-gray-500">{{ remote.config.email_name ? `${t('accountOps.providers.email')} · ` : '' }}{{ remote.config.recipient }}</p>
-              <div class="mt-3 flex gap-4 text-xs"><button type="button" class="text-primary-600" data-testid="edit-email-channel"
-                  @click="showEmail = true">{{ t('common.edit') }}</button><button type="button" :disabled="mutating"
-                  class="text-gray-500 hover:text-red-600 disabled:opacity-40" data-testid="delete-email-channel"
-                  @click="removeEmail">{{ t('common.delete') }}</button></div>
-            </div>
-            <div v-for="(hook, index) in remote.config.webhooks" :key="hook.id"
-              class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
-              <div class="flex items-center justify-between gap-2"><span
-                  class="min-w-0 truncate text-sm font-medium" :title="hook.name || `${t(`accountOps.providers.${hook.provider}`)} ${index + 1}`">{{ hook.name || `${t(`accountOps.providers.${hook.provider}`)} ${index + 1}` }}</span><span class="text-xs"
-                  :class="hook.enabled ? 'text-emerald-600' : 'text-gray-500'">{{ t(hook.enabled ? 'accountOps.channelEnabled' : 'accountOps.channelDisabled') }}</span>
-              </div>
-              <p class="mt-2 text-xs text-gray-500">
-                {{ hook.name ? `${t(`accountOps.providers.${hook.provider}`)} · ` : '' }}{{ t(hook.url_configured ? 'accountOps.credentialSaved' : 'accountOps.channelUnconfigured') }}</p>
-              <div class="mt-3 flex gap-4 text-xs"><button type="button" class="text-primary-600" :data-testid="`edit-webhook-${hook.id}`"
-                  @click="editWebhook(hook)">{{ t('common.edit') }}</button><button type="button"
-                  class="text-primary-600 disabled:opacity-40" :disabled="!hook.url_configured || !!testingId"
-                  :data-testid="`account-ops-webhook-test-${hook.id}`"
-                  @click="testWebhook(hook.id)">{{ t(testingId === hook.id ? 'common.loading' : 'accountOps.testRobot') }}</button><button
-                  type="button" class="text-gray-500 hover:text-red-600" @click="removeWebhook(hook.id)">{{ t('common.delete') }}</button>
-              </div>
-            </div><button type="button"
-              class="min-h-28 rounded-lg border border-dashed border-gray-300 p-4 text-sm text-primary-600 disabled:opacity-40 dark:border-dark-600"
-              :disabled="!canAddChannel" data-testid="account-ops-add-channel"
-              @click="showAddChannel = true">{{ t('accountOps.addChannel') }}</button>
-          </div>
-        </details>
+
 
       </section>
       <template v-if="remote && auth.user">
         <AccountOpsBatchRuleDialog :show="batchAccounts.length > 0" :accounts="batchAccounts" :config="remote.config" @close="batchAccounts = []"
           @saved="acceptBatchConfig" @error="app.showError" />
-        <AccountOpsAddChannelDialog :show="showAddChannel" :email-configured="!!remote.config.recipient"
-          :webhook-count="remote.config.webhooks?.length ?? 0" :encryption-configured="remote.encryption_key_configured === true"
-          @close="showAddChannel = false" @select="addChannel" />
-        <AccountOpsWebhookDialog :show="showWebhook" :hook="editingHook" :encryption-configured="remote.encryption_key_configured === true"
-          :testing-id="testingId" @close="showWebhook = false" @saved="acceptConfig" @error="app.showError" @test="testWebhook" />
-        <AccountOpsEmailDialog :user-id="auth.user?.id" :show="showEmail" :config="remote.config" :smtp-configured="remote.smtp_configured"
-          @close="showEmail = false" @saved="acceptConfig" @error="app.showError" />
         <AccountOpsGroupDialog :show="showGroupDialog" :groups="accountGroups" :accounts="scopedAccounts"
           @close="showGroupDialog = false" @saved="acceptGroupConfig" @error="app.showError" />
       </template>
@@ -173,15 +130,12 @@ import Toggle from '@/components/common/Toggle.vue'
 import AccountOpsRuleList from '@/components/admin/operations/AccountOpsRuleList.vue'
 import AccountOpsBatchRuleDialog from '@/components/admin/operations/AccountOpsBatchRuleDialog.vue'
 import AccountOpsDeliveryDetails from '@/components/admin/operations/AccountOpsDeliveryDetails.vue'
-import AccountOpsWebhookDialog from '@/components/admin/operations/AccountOpsWebhookDialog.vue'
-import AccountOpsEmailDialog from '@/components/admin/operations/AccountOpsEmailDialog.vue'
-import AccountOpsAddChannelDialog from '@/components/admin/operations/AccountOpsAddChannelDialog.vue'
 import AccountOpsPoolSettings from '@/components/admin/operations/AccountOpsPoolSettings.vue'
 import AccountOpsPoolEvent from '@/components/admin/operations/AccountOpsPoolEvent.vue'
 import AccountOpsGlobalSettings from '@/components/admin/operations/AccountOpsGlobalSettings.vue'
 import AccountOpsGroupDialog from '@/components/admin/operations/AccountOpsGroupDialog.vue'
-import { getAccountOpsSettings, saveAccountOpsNotificationSettings, getAccountOpsEvents, getAccountOpsThresholdAccounts, getAccountOpsThresholdGroups, testAccountOpsWebhook, saveAccountOpsRuleGroups, deleteAccountOpsWebhook } from '@/api/admin/accountOps'
-import type { AccountOpsConfig, AccountOpsEvent, AccountOpsThresholdAccount, AccountOpsWebhook, AccountOpsGroup, AccountOpsRuleBatchGroup } from '@/api/admin/accountOps'
+import { getAccountOpsSettings, saveAccountOpsNotificationSettings, getAccountOpsEvents, getAccountOpsThresholdAccounts, getAccountOpsThresholdGroups, saveAccountOpsRuleGroups } from '@/api/admin/accountOps'
+import type { AccountOpsConfig, AccountOpsEvent, AccountOpsThresholdAccount, AccountOpsGroup, AccountOpsRuleBatchGroup } from '@/api/admin/accountOps'
 import { readProfitChannelAccountIDs } from '@/api/admin/profitOperations'
 import { extractApiErrorMessage } from '@/utils/apiError'
 const props = withDefaults(defineProps<{ embedded?: boolean; active?: boolean; channelId?: number; accountId?: number }>(), {active:true})
@@ -191,8 +145,7 @@ const tabs = ['settings','records'] as const, activeTab = ref<'records'|'setting
 const loading = ref(false), loadingMore = ref(false), mutating = ref(false)
 const thresholdAccounts = ref<AccountOpsThresholdAccount[]>([]), thresholdLoading = ref(false), thresholdReady = ref(false), thresholdError = ref('')
 const accountGroups = ref<AccountOpsGroup[]>([]), showGroupDialog = ref(false)
-const enabledDraft = ref(false), globalSaving = ref(false), showAddChannel = ref(false)
-const canAddChannel = computed(() => !!remote.value && (!remote.value.config.recipient || ((remote.value.config.webhooks?.length ?? 0) < 5 && remote.value.encryption_key_configured === true)))
+const enabledDraft = ref(false), globalSaving = ref(false)
 watch(() => remote.value?.config.enabled, enabled => { enabledDraft.value = enabled ?? false }, { immediate: true })
 const ruleList = ref<InstanceType<typeof AccountOpsRuleList> | null>(null)
 const batchAccounts = ref<AccountOpsThresholdAccount[]>([])
@@ -214,8 +167,7 @@ watch([() => props.channelId, thresholdAccounts], async () => {
 const inScope=(id:number)=>props.accountId ? id===props.accountId : (!props.channelId||memberIds.value.has(id))
 const scopedAccounts=computed(()=>thresholdAccounts.value.filter(a=>inScope(a.account_id)))
 const query = ref(''), kind = ref('all'), phase = ref('all'), alertKinds = ['account_pool','balance_threshold','quota_threshold','balance_low','weekly_quota']
-const editingHook = ref<AccountOpsWebhook|null>(null), showWebhook = ref(false), showEmail = ref(false), testingId = ref<string|null>(null)
-let version = 0, accountsVersion = 0, testSequence = 0, mutationSequence = 0, paginationSequence = 0, alive = true, timer: ReturnType<typeof setInterval>|null = null
+let version = 0, accountsVersion = 0, mutationSequence = 0, paginationSequence = 0, alive = true, timer: ReturnType<typeof setInterval>|null = null
 const normalize = (c: AccountOpsConfig): AccountOpsConfig => ({ pool_notifications:c.pool_notifications ? { ...c.pool_notifications } : undefined, enabled:c.enabled, recipient:c.recipient,email_name:c.email_name ?? '', balance_low:c.balance_low, balance_low_disabled_account_ids:[...(c.balance_low_disabled_account_ids ?? [])], weekly_quota:c.weekly_quota, cooldown_minutes:c.cooldown_minutes, webhooks:(c.webhooks??[]).map(h=>({id:h.id,name:h.name,provider:h.provider,enabled:h.enabled,url_configured:h.url_configured===true,secret_configured:h.secret_configured===true,message_template:h.message_template})), groups:(c.groups??[]).map(g=>({id:g.id,name:g.name,...(g.provider_id ? {provider_id:g.provider_id} : {}),provider:g.provider,site:g.site,account_ids:g.account_ids ? [...g.account_ids] : []})), balance_thresholds:(c.balance_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})), quota_thresholds:(c.quota_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})) })
 const eventKey = (e: AccountOpsEvent) => e.id ?? `${e.account_id}:${e.kind}:${e.phase??'legacy'}:${e.first_seen}`
 const filteredEvents = computed(() => events.value.filter(event => {
@@ -275,19 +227,6 @@ async function loadGroups() {
   }
 }
 function acceptBatchConfig(config: AccountOpsConfig){acceptConfig(config);ruleList.value?.clearSelection()}
-function editWebhook(hook:AccountOpsWebhook|null){editingHook.value=hook;showWebhook.value=true}
-function addChannel(provider: 'email'|'webhook') {
-  if (!remote.value) return
-  if (provider === 'email') {
-    if (remote.value.config.recipient) return
-    showEmail.value = true
-  } else {
-    if (remote.value.encryption_key_configured !== true || (remote.value.config.webhooks?.length ?? 0) >= 5) return
-    editWebhook(null)
-  }
-  showAddChannel.value = false
-}
-async function removeEmail(){await mutate(()=>saveAccountOpsNotificationSettings({recipient:'',email_name:''}))}
 async function mutate(action:()=>Promise<AccountOpsConfig>){if(mutating.value)return;const current=++mutationSequence;mutating.value=true;try{const c=await action();if(alive&&current===mutationSequence)acceptConfig(c)}catch(e){if(alive&&current===mutationSequence)app.showError(message(e))}finally{if(alive&&current===mutationSequence)mutating.value=false}}
 async function toggleNotifications(enabled: boolean) {
   enabledDraft.value = enabled
@@ -303,10 +242,8 @@ async function toggleGroup(_group:AccountOpsGroup, accounts:AccountOpsThresholdA
   if (oauth.length) groups.push({ account_ids: oauth.map(account => account.account_id), rule: { metric: 'quota' as const, enabled, enabled_only: true } })
   if (groups.length) await mutate(() => saveAccountOpsRuleGroups(groups))
 }
-async function removeWebhook(id:string){await mutate(()=>deleteAccountOpsWebhook(id))}
-async function testWebhook(id:string){if(testingId.value)return;const current=++testSequence;testingId.value=id;try{await testAccountOpsWebhook(id);if(alive&&current===testSequence)app.showSuccess(t('accountOps.testSuccess'))}catch(e){if(alive&&current===testSequence)app.showError(message(e))}finally{if(alive&&current===testSequence)testingId.value=null}}
 async function more(){if(loadingMore.value||loading.value)return;const current=version, sequence=++paginationSequence;loadingMore.value=true;try{const p=await getAccountOpsEvents(events.value.length);if(alive&&current===version){const merged=new Map([...events.value,...p.items].map(e=>[eventKey(e),e]));events.value=[...merged.values()];hasMore.value=p.has_more}}catch(e){if(alive&&current===version)app.showError(message(e))}finally{if(alive&&sequence===paginationSequence)loadingMore.value=false}}
-watch(()=>auth.user?`${auth.user.id}:${auth.user.role}`:'',()=>{version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;loading.value=loadingMore.value=mutating.value=thresholdLoading.value=false;thresholdAccounts.value=[];accountGroups.value=[];thresholdReady.value=false;showWebhook.value=showEmail.value=showAddChannel.value=showGroupDialog.value=false;testingId.value=null;enabledDraft.value=globalSaving.value=false;activeTab.value='settings';batchAccounts.value=[]},{flush:'sync'})
+watch(()=>auth.user?`${auth.user.id}:${auth.user.role}`:'',()=>{version++;accountsVersion++;mutationSequence++;paginationSequence++;loading.value=loadingMore.value=mutating.value=thresholdLoading.value=false;thresholdAccounts.value=[];accountGroups.value=[];thresholdReady.value=false;showGroupDialog.value=false;enabledDraft.value=globalSaving.value=false;activeTab.value='settings';batchAccounts.value=[]},{flush:'sync'})
 onMounted(()=>{void load();void loadAccounts();timer=setInterval(()=>{if(props.active!==false&&document.visibilityState==='visible'&&!loadingMore.value&&!mutating.value&&!globalSaving.value){void load();if(activeTab.value==='settings')void loadAccounts()}},30000)})
-onBeforeUnmount(()=>{alive=false;version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;if(timer)clearInterval(timer)})
+onBeforeUnmount(()=>{alive=false;version++;accountsVersion++;mutationSequence++;paginationSequence++;if(timer)clearInterval(timer)})
 </script>

@@ -143,6 +143,7 @@ func (s *ScheduledTestRunnerService) runPelicanPlan(ctx context.Context, plan *S
 		logger.LegacyPrintf("service.scheduled_test_runner", "pelican plan=%d account=%d skipped: template quota unavailable", plan.ID, plan.AccountID)
 		finishCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stop()
+		s.patrolOutcome(finishCtx, plan, until, "skipped")
 		var finishErr error
 		if repo, ok := s.planRepo.(QualityQuotaSkipRepository); ok {
 			finishErr = repo.FinishQuotaSkippedPelican(finishCtx, plan, until, time.Now())
@@ -180,6 +181,7 @@ func (s *ScheduledTestRunnerService) runPelicanPlan(ctx context.Context, plan *S
 			logger.LegacyPrintf("service.scheduled_test_runner", "state probe plan=%d account=%d skipped: account unavailable or unsupported", plan.ID, plan.AccountID)
 			finishCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 			defer stop()
+			s.patrolOutcome(finishCtx, plan, until, "skipped")
 			if finishErr := s.planRepo.FinishPelican(finishCtx, plan.ID, until, time.Now()); finishErr != nil {
 				logger.LegacyPrintf("service.scheduled_test_runner", "pelican plan=%d finish failed: %v", plan.ID, finishErr)
 			}
@@ -197,6 +199,7 @@ func (s *ScheduledTestRunnerService) runPelicanPlan(ctx context.Context, plan *S
 			return false
 		}
 	}
+	s.patrolOutcome(ctx, plan, until, "running")
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	models := []string{plan.ModelID}
@@ -312,6 +315,7 @@ func (s *ScheduledTestRunnerService) runPelicanPlan(ctx context.Context, plan *S
 			logQualityBatchFailure()
 			return false
 		}
+		s.patrolOutcome(saveCtx, plan, until, patrolVerdict(results))
 		// Release worker/concurrency slots before waiting for other accounts.
 		// A later tick finalizes this durable run using the original lease/version.
 		return true
@@ -368,6 +372,7 @@ func (s *ScheduledTestRunnerService) runPelicanPlan(ctx context.Context, plan *S
 		// Persistence-only recovery after lease expiry needs a durable continuation.
 		return false
 	}
+	s.patrolOutcome(saveCtx, plan, until, patrolVerdict(results))
 	if cleanup, ok := s.planRepo.(QualityOAuth401Repository); ok {
 		evidence := QualityOAuth401Evidence(plan, results)
 		deleted, cleanupErr := cleanup.CompleteQualityOAuth401Round(saveCtx, plan, until, evidence)

@@ -33,8 +33,6 @@ describe('pool notification settings', () => {
     expect(apiClient.put).toHaveBeenCalledWith('/admin/account-ops/notification-settings', { pool_notifications: pool })
     expect(view.emitted('saved')?.[0]?.[0]).toMatchObject({ recipient: 'ops@example.test', pool_notifications: pool })
     expect(view.emitted('saving')).toEqual([[true], [false]])
-    expect(view.get('code').text()).toContain('"body":"{{message}}"')
-    expect(view.get('code').text()).not.toContain('device_key')
   })
 
   it('preserves unsaved edits across polling and allows retry after an API failure', async () => {

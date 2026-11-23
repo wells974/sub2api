@@ -9,11 +9,7 @@
       <p class="text-xs leading-5 text-gray-500">{{ t('accountOps.pool.hint') }}</p>
       <button type="submit" :disabled="!dirty" class="btn btn-secondary text-sm">{{ t(busy ? 'accountOps.pool.saving' : 'accountOps.pool.save') }}</button>
     </fieldset>
-    <details class="mt-3 text-xs leading-5 text-gray-500">
-      <summary class="cursor-pointer">Bark</summary>
-      <p class="mt-2">{{ t('accountOps.pool.bark') }}</p>
-      <code class="mt-2 block break-all">{{ barkTemplate }}</code>
-    </details>
+
   </form>
 </template>
 
@@ -21,7 +17,6 @@
 import { onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AccountOpsConfig } from '@/api/admin/accountOps'
-import { barkTemplate } from './AccountOpsBarkSound.vue'
 import { saveAccountOpsPool } from '@/api/admin/accountOpsPool'
 import { extractApiErrorMessage } from '@/utils/apiError'
 

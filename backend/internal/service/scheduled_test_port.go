@@ -38,6 +38,8 @@ type PelicanTestConfig struct {
 
 // ScheduledTestPlan represents a scheduled test plan domain model.
 type ScheduledTestPlan struct {
+	// Set only on scheduler snapshots selected for a patrol notification.
+	PatrolTracked     bool `json:"-"`
 	degradationRetest bool
 	// Populated only from the repository's one-shot manual trigger marker.
 	ManualQualityRun      bool              `json:"-"`

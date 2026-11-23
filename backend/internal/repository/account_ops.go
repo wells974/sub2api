@@ -153,7 +153,7 @@ func (r *accountOpsRepository) suppressDisabled(ctx context.Context, exec opsCon
 }
 
 func (r *accountOpsRepository) List(ctx context.Context, offset, limit int) ([]service.AccountOpsEvent, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT `+opsTransitionColumns+` FROM (SELECT 'legacy:'||account_id||':'||kind AS id,''::text AS episode_id,''::text AS phase,NULL::boolean AS notification_enabled,`+accountOpsColumns+`,''::text AS criteria FROM account_ops_alerts UNION ALL SELECT `+opsTransitionColumns+` FROM account_ops_threshold_events) history ORDER BY last_seen DESC,id LIMIT $1 OFFSET $2`, limit, offset)
+	rows, err := r.db.QueryContext(ctx, `SELECT `+opsTransitionColumns+` FROM (SELECT 'legacy:'||account_id||':'||kind AS id,''::text AS episode_id,''::text AS phase,NULL::boolean AS notification_enabled,`+accountOpsColumns+`,''::text AS criteria FROM account_ops_alerts UNION ALL SELECT `+opsTransitionColumns+` FROM account_ops_threshold_events WHERE kind<>'quality_patrol') history ORDER BY last_seen DESC,id LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		return nil, err
 	}

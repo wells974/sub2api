@@ -18,6 +18,9 @@ type accountOpsMessage struct {
 }
 
 func (s *AccountOpsService) notificationMessage(e *AccountOpsEvent) accountOpsMessage {
+	if e.Kind == qualityPatrolKind && e.Details != nil && e.Details.Patrol != nil {
+		return s.patrolMessage(e)
+	}
 	if e.Kind == AccountOpsPoolKind {
 		return s.poolNotificationMessage(e)
 	}
@@ -185,7 +188,7 @@ func opsEmailIdentity(recipient string) string {
 func (s *AccountOpsService) deliverNotification(ctx context.Context, e *AccountOpsEvent) {
 	query, cancel := context.WithTimeout(ctx, 5*time.Second)
 	s.settingsMu.Lock()
-	c, err := s.loadConfig(query)
+	c, err := s.deliveryConfig(query, e)
 	s.settingsMu.Unlock()
 	cancel()
 	state := "suppressed"
@@ -238,7 +241,7 @@ func (s *AccountOpsService) deliverNotification(ctx context.Context, e *AccountO
 			recipient := ""
 			query, cancel := context.WithTimeout(deliveryCtx, 5*time.Second)
 			s.settingsMu.Lock()
-			freshConfig, configErr := s.loadConfig(query)
+			freshConfig, configErr := s.deliveryConfig(query, e)
 			s.settingsMu.Unlock()
 			cancel()
 			if configErr != nil {
@@ -319,7 +322,7 @@ func (s *AccountOpsService) deliverNotification(ctx context.Context, e *AccountO
 			// A durable rate reservation may wait. Refresh both the destination and
 			// the account snapshot after that wait, immediately before the external send.
 			s.settingsMu.Lock()
-			latest, latestErr := s.loadConfig(send)
+			latest, latestErr := s.deliveryConfig(send, e)
 			s.settingsMu.Unlock()
 			if latestErr != nil {
 				cancel()

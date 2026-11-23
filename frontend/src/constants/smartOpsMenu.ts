@@ -4,6 +4,7 @@ export const SMART_OPS_MENU_ITEMS = [
   { path: '/admin/priority-scheduling', label: 'priorityScheduling.title' },
   { path: '/admin/qqbot/overview', label: 'qqbot.title' },
   { path: '/admin/channel-config', label: 'channelConfig.title' },
+  { path: '/admin/notification-channels', label: 'accountOps.channelsPage' },
   { path: '/admin/account-quality', label: 'qualityOps.title' },
   { path: '/admin/controlled-experiments', label: 'controlledExperiments.title' },
   { path: '/admin/token-guard-v2', label: 'tokenGuardV2.title' },

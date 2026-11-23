@@ -1,6 +1,7 @@
 import pool from './accountOpsPool'
 
 export default {
+  "channelsPage": "Notification settings",
   pool,
   "account_pool": "Global account pool status",
   "accountBalanceNotification": "Request balance error notifications",
@@ -143,7 +144,7 @@ export default {
     "unknown": "No data yet"
   },
   "recordsTab": "Notification records",
-  "settingsTab": "Rules and channels",
+  "settingsTab": "Alert rules",
   "pageSections": "Account operations sections",
   "recordsOnceHint": "One record for each warning and confirmed recovery, with event-time values and delivery results.",
   "recordsEmptyHint": "Configure channels and account rules to record warnings, confirmed recovery and request-failure alerts.",
