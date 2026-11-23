@@ -150,11 +150,7 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 		return
 	}
 
-	if repo, ok := s.planRepo.(qualityPatrolRecorder); ok {
-		if err := repo.PrepareQualityPatrol(ctx, plans); err != nil {
-			logger.LegacyPrintf("service.quality_patrol", "could not prepare quality patrol notifications")
-		}
-	}
+	s.prepareQualityPatrol(ctx, plans)
 	logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] found %d due plans", len(plans))
 	for _, plan := range plans {
 		if plan.PelicanConfig != nil && plan.PelicanConfig.QuestionKind == QualityRandomQuestionKind {

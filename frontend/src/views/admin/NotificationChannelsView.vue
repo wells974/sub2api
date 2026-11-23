@@ -92,7 +92,7 @@ async function load() {
     if (current === generation) error.value = message(e)
   }
 }
-watch(() => [auth.user?.id, auth.user?.role], () => {
+watch([() => auth.user?.id, () => auth.user?.role], () => {
   remote.value = null
   showWebhook.value = showEmail.value = showAddChannel.value = mutating.value = false
   testingId.value = null

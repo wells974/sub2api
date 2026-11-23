@@ -5,10 +5,11 @@ package repository
 import (
 	"context"
 	"fmt"
-	"github.com/Wei-Shaw/sub2api/internal/service"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/stretchr/testify/require"
 )
 
 type patrolTestEmail struct{ titles, bodies []string }
@@ -57,7 +58,21 @@ func TestQualityPatrolGroupedDelivery(t *testing.T) {
 	}
 	c := service.QualityPatrolConfig{Enabled: true, Rules: []string{rule}}
 	require.NoError(t, svc.SaveQualityPatrol(ctx, c))
-	require.NoError(t, plans.PrepareQualityPatrol(ctx, members[:1]))
+	// Independent scheduler replicas may select the same due plan concurrently.
+	const replicas = 4
+	errors := make(chan error, replicas)
+	start := make(chan struct{})
+	for range replicas {
+		snapshot := *members[0]
+		go func() {
+			<-start
+			errors <- plans.PrepareQualityPatrol(ctx, []*service.ScheduledTestPlan{&snapshot})
+		}()
+	}
+	close(start)
+	for range replicas {
+		require.NoError(t, <-errors)
+	}
 	require.NoError(t, plans.PrepareQualityPatrol(ctx, members))
 	for i, p := range members {
 		require.Equal(t, i < 3, p.PatrolTracked)
@@ -75,8 +90,11 @@ func TestQualityPatrolGroupedDelivery(t *testing.T) {
 	}
 	count(0)
 	require.NoError(t, plans.SetPatrolOutcome(ctx, members[2].ID, due, until, "inconclusive"))
-	for range 2 {
-		require.NoError(t, repo.EnqueuePatrolRounds(ctx))
+	for range replicas {
+		go func() { errors <- repo.EnqueuePatrolRounds(ctx) }()
+	}
+	for range replicas {
+		require.NoError(t, <-errors)
 	}
 	count(1)
 	reset := func() {
@@ -105,6 +123,19 @@ func TestQualityPatrolGroupedDelivery(t *testing.T) {
 	send()
 	require.Len(t, mail.titles, 1)
 	var state string
+	require.NoError(t, integrationDB.QueryRow(`SELECT state FROM account_ops_threshold_events WHERE group_id=$1 AND kind='quality_patrol'`, rule).Scan(&state))
+	require.Equal(t, "suppressed", state)
+
+	// Removing the subscription invalidates even an already claimed retry.
+	reset()
+	claimed, err := repo.Claim(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	c.QuietEnabled = false
+	c.Rules = []string{fmt.Sprintf("plan:%d", members[3].ID)}
+	require.NoError(t, svc.SaveQualityPatrol(ctx, c))
+	svc.DeliverNotificationForTesting(ctx, claimed)
+	require.Len(t, mail.titles, 1)
 	require.NoError(t, integrationDB.QueryRow(`SELECT state FROM account_ops_threshold_events WHERE group_id=$1 AND kind='quality_patrol'`, rule).Scan(&state))
 	require.Equal(t, "suppressed", state)
 }

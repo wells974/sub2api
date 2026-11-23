@@ -252,13 +252,7 @@ func (s *AccountOpsService) start(runSharedJobs bool) {
 					s.evaluateOpenAIAPIKeyFallback(ctx)
 				}
 				if s.refreshConfig(ctx, runSharedJobs) && runSharedJobs {
-					if repo, ok := s.repo.(qualityPatrolRepository); ok {
-						query, stop := context.WithTimeout(ctx, 5*time.Second)
-						if err := repo.EnqueuePatrolRounds(query); err != nil {
-							s.failures.Add(1)
-						}
-						stop()
-					}
+					s.enqueueQualityPatrol(ctx)
 					s.scanAccountPool(ctx)
 					s.scanBalances(ctx)
 					s.deliver(ctx)

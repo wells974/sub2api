@@ -144,12 +144,42 @@ type qualityPatrolRecorder interface {
 	SetPatrolOutcome(context.Context, int64, time.Time, time.Time, string) error
 }
 
+// Notification bookkeeping is best effort. A blocked notification table must
+// leave the scheduler time to run and persist the actual account checks.
+const patrolBookkeepingTimeout = 2 * time.Second
+
+func (s *ScheduledTestRunnerService) prepareQualityPatrol(ctx context.Context, plans []*ScheduledTestPlan) {
+	repo, ok := s.planRepo.(qualityPatrolRecorder)
+	if !ok {
+		return
+	}
+	query, cancel := context.WithTimeout(ctx, patrolBookkeepingTimeout)
+	defer cancel()
+	if err := repo.PrepareQualityPatrol(query, plans); err != nil {
+		logger.LegacyPrintf("service.quality_patrol", "could not prepare quality patrol notifications")
+	}
+}
+
+func (s *AccountOpsService) enqueueQualityPatrol(ctx context.Context) {
+	repo, ok := s.repo.(qualityPatrolRepository)
+	if !ok {
+		return
+	}
+	query, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := repo.EnqueuePatrolRounds(query); err != nil {
+		s.failures.Add(1)
+	}
+}
+
 func (s *ScheduledTestRunnerService) patrolOutcome(ctx context.Context, p *ScheduledTestPlan, until time.Time, outcome string) {
 	repo, ok := s.planRepo.(qualityPatrolRecorder)
 	if !ok || !p.PatrolTracked || p.NextRunAt == nil {
 		return
 	}
-	if err := repo.SetPatrolOutcome(ctx, p.ID, *p.NextRunAt, until, outcome); err != nil {
+	query, cancel := context.WithTimeout(ctx, patrolBookkeepingTimeout)
+	defer cancel()
+	if err := repo.SetPatrolOutcome(query, p.ID, *p.NextRunAt, until, outcome); err != nil {
 		logger.LegacyPrintf("service.quality_patrol", "could not record quality patrol outcome for plan %d", p.ID)
 	}
 }

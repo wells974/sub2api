@@ -366,6 +366,10 @@ describe('account operations tabs and independent saves', () => {
     await wrapper.get('[data-testid="account-ops-add-channel"]').trigger('click'); await flushPromises()
     await wrapper.get('[data-testid="add-channel-email"]').trigger('click'); await flushPromises()
     await wrapper.get('#account-ops-email-name').setValue('运营邮箱')
+    // Refreshing this administrator's profile must preserve their unsaved draft.
+    state.auth.user = { ...state.auth.user }
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('#account-ops-email-name').element.value).toBe('运营邮箱')
     await wrapper.get('#account-ops-email').setValue('ops@example.com')
     await wrapper.get('#account-ops-email-form').trigger('submit'); await flushPromises()
     expect(saveAccountOpsNotificationSettings).toHaveBeenCalledWith({ recipient: 'ops@example.com', email_name: '运营邮箱' })

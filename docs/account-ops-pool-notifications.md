@@ -81,6 +81,8 @@ URL: https://api.day.app/你的设备Key
 
 数据库迁移沿用项目的不可变迁移规则。合并上游新增迁移时检查文件顺序；已部署的迁移不能改内容或重命名。
 
+巡检复用通知发送队列。合并上游时，如果新迁移重建了 `account_ops_threshold_events_kind_check`，检查约束是否同时接受上游的事件类型和 `quality_patrol`。如果上游调整巡检调度，核对计划领取前的成员快照和结果保存后的统计。可以运行 `TestQualityPatrolGroupedDelivery` 和 `TestAccountOpsPoolAtomicConcurrentRestartAndRetries` 验证巡检汇总和号池告警的入队、发送及重试。
+
 ## 持久化与验证
 
 锁顺序与原配置更新保持一致：配置 advisory lock → 号池快照 → 事件队列。取得锁后重新读取配置和账号状态；不会让旧配置扫描在关闭通知后重新入队。快照更新与新增事件在同一事务里提交，外部通知发送不占用这个事务。
