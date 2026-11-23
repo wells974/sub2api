@@ -21,6 +21,7 @@
 import { onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AccountOpsConfig } from '@/api/admin/accountOps'
+import { barkTemplate } from './AccountOpsBarkSound.vue'
 import { saveAccountOpsPool } from '@/api/admin/accountOpsPool'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
@@ -29,7 +30,6 @@ const emit = defineEmits<{ saved: [config: AccountOpsConfig]; error: [message: s
 const { t } = useI18n()
 const draft = reactive({ enabled: false, notify_states: true, notify_counts: true })
 const dirty = ref(false), busy = ref(false)
-const barkTemplate = '{"title":"{{title}}","body":"{{message}}","group":"Sub2API"}'
 let alive = true
 function reset(config: AccountOpsConfig) {
   Object.assign(draft, config.pool_notifications ?? { enabled: false, notify_states: true, notify_counts: true })

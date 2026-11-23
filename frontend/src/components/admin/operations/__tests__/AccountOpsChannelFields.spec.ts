@@ -21,6 +21,7 @@ describe('account notification credentials', () => {
     const url = wrapper.get('[data-testid="account-ops-webhook-url-saved"]')
     expect((url.element as HTMLInputElement).value).toBe('')
     expect(url.attributes('type')).toBe('password')
+    expect(wrapper.find('[data-testid="account-ops-bark-sound"]').exists()).toBe(false)
     expect((wrapper.vm as any).prepare()).toEqual([{ id: 'saved', provider: 'auto', enabled: true }])
     await url.setValue('https://open.feishu.cn/open-apis/bot/v2/hook/test-only')
     await wrapper.get('[data-testid="account-ops-webhook-secret-saved"]').setValue('test-only-secret')
@@ -49,6 +50,39 @@ describe('account notification credentials', () => {
     await wrapper.get('[data-testid="account-ops-webhook-template-saved"]').setValue('{"content":"{{message}}"}')
     expect((wrapper.vm as any).prepare()[0]).toMatchObject({ provider: 'auto', message_template: '{"content":"{{message}}"}' })
     expect(wrapper.get('[data-testid="account-ops-webhook-test-saved"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('edits and clears an existing Bark sound without changing other JSON values', async () => {
+    const template = '{"title":"{{title}}","body":"{{message}}","sound":"bell","id":1234567890123456789,"extra":{"sound":"nested"}}'
+    const hook = { ...webhook(), provider: 'custom' as const, message_template: template }
+    const wrapper = mount(ChannelFields, { props: { modelValue: [hook], encryptionConfigured: true } })
+    const sound = wrapper.get<HTMLInputElement>('[data-testid="account-ops-bark-sound"]')
+    const editor = wrapper.get<HTMLTextAreaElement>('[data-testid="account-ops-webhook-template-saved"]')
+    expect(sound.element.value).toBe('bell')
+    expect(wrapper.vm.prepare()[0]).not.toHaveProperty('message_template')
+    await sound.setValue('alarm')
+    expect(wrapper.vm.prepare()[0].message_template).toBe(template.replace('"bell"', '"alarm"'))
+    expect(wrapper.get('[data-testid="account-ops-webhook-test-saved"]').attributes('disabled')).toBeDefined()
+    await sound.setValue('')
+    expect(editor.element.value).toBe(template.replace('"sound":"bell",', ''))
+    await editor.setValue(template)
+    expect(sound.element.value).toBe('bell')
+    expect(wrapper.vm.prepare()[0]).not.toHaveProperty('message_template')
+    wrapper.unmount()
+  })
+
+  it('starts with the Bark payload for an empty template and protects unfinished JSON', async () => {
+    const hook = { ...webhook(), provider: 'custom' as const }
+    const wrapper = mount(ChannelFields, { props: { modelValue: [hook], encryptionConfigured: true } })
+    const sound = wrapper.get<HTMLInputElement>('[data-testid="account-ops-bark-sound"]')
+    await sound.setValue('alarm')
+    expect(JSON.parse(wrapper.vm.prepare()[0].message_template!)).toEqual({
+      title: '{{title}}', body: '{{message}}', group: 'Sub2API', sound: 'alarm',
+    })
+    await wrapper.get('[data-testid="account-ops-webhook-template-saved"]').setValue('{"body":')
+    expect(sound.element.disabled).toBe(true)
+    expect(wrapper.vm.prepare()[0].message_template).toBe('{"body":')
     wrapper.unmount()
   })
 

@@ -28,6 +28,10 @@
       <label v-if="hook.secret_configured && supportsSigning(hook) && !inputs[hook.id]!.url" class="flex items-center gap-2 text-xs text-gray-500">
         <input v-model="inputs[hook.id]!.clearSecret" type="checkbox" :data-testid="`account-ops-webhook-clear-secret-${hook.id}`" />{{ t('accountOps.clearSecret') }}
       </label>
+      <AccountOpsBarkSound
+        v-if="detectedProvider(hook) === 'custom'"
+        v-model="inputs[hook.id]!.template"
+      />
       <details v-if="detectedProvider(hook) === 'custom'" class="rounded-lg border border-gray-200 p-3 dark:border-dark-600" :open="!!hook.message_template">
         <summary class="cursor-pointer text-sm font-medium">{{ t('accountOps.webhookTemplate') }}</summary>
         <div class="mt-3 space-y-3">
@@ -46,6 +50,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AccountOpsBarkSound from './AccountOpsBarkSound.vue'
 import type { AccountOpsWebhook, AccountOpsWebhookInput, AccountOpsWebhookProvider } from '@/api/admin/accountOps'
 const props = defineProps<{ modelValue: AccountOpsWebhook[]; encryptionConfigured: boolean; testingId?: string | null; single?: boolean }>()
 const emit = defineEmits<{ (event: 'update:modelValue', value: AccountOpsWebhook[]): void; (event: 'test', id: string): void }>()
