@@ -951,6 +951,8 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.PUT("/account-ops/accounts/:id/balance-notification", h.Admin.AccountOps.SetBalanceLowNotification)
 	admin.GET("/account-ops/config", h.Admin.AccountOps.GetConfig)
 	admin.PUT("/account-ops/config", h.Admin.AccountOps.SaveConfig)
+	admin.GET("/quality-jev-settings", h.Admin.Setting.GetQualityJev)
+	admin.PUT("/quality-jev-settings", h.Admin.Setting.SaveQualityJev)
 	admin.GET("/quality-patrol-notifications", h.Admin.AccountOps.GetQualityPatrol)
 	admin.PUT("/quality-patrol-notifications", h.Admin.AccountOps.SaveQualityPatrol)
 	admin.PUT("/account-ops/notification-settings", h.Admin.AccountOps.SaveNotificationSettings)

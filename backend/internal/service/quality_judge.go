@@ -51,8 +51,8 @@ type QualityJudgeService struct {
 	jev      *qualityJevJudge
 }
 
-func NewQualityJudgeService(accounts AccountRepository, groups GroupRepository, slots *ConcurrencyService, tests *AccountTestService, moderation *ContentModerationService) *QualityJudgeService {
-	return &QualityJudgeService{accounts: accounts, groups: groups, slots: slots, request: tests.runQualityJudgeRequest, jev: newQualityJevJudge(moderation, tests)}
+func NewQualityJudgeService(accounts AccountRepository, groups GroupRepository, slots *ConcurrencyService, tests *AccountTestService, settings SettingRepository, proxies ProxyRepository) *QualityJudgeService {
+	return &QualityJudgeService{accounts: accounts, groups: groups, slots: slots, request: tests.runQualityJudgeRequest, jev: newQualityJevJudge(settings, proxies, tests)}
 }
 
 func (s *QualityJudgeService) Judge(ctx context.Context, testedAccount int64, cfg *PelicanTestConfig, answer string) *QualityJudgment {

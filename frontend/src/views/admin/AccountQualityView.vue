@@ -4,7 +4,7 @@
       <SmartOpsNav />
       <div class="workspace-heading">
         <div><p class="workspace-eyebrow">{{ t('qualityOps.workspaceLabel') }}</p><h2>{{ t('qualityOps.workspaceTitle') }}</h2><p class="workspace-subtitle">{{ t('qualityOps.workspaceHint') }}</p></div>
-        <div class="heading-actions"><span class="updated-label" aria-live="polite">{{ store.updatedAt ? t('qualityOps.updatedAt', { time: clock(store.updatedAt) }) : t('qualityOps.loading') }}</span><button v-if="canCopyRules" class="btn btn-secondary" data-testid="quality-patrol-settings" @click="showPatrol = true"><Icon name="bell" size="sm" />{{ t('qualityOps.patrol.title') }}</button><button class="btn btn-secondary" :disabled="refreshing" @click="load"><Icon name="refresh" size="sm" :class="{ 'animate-spin': refreshing }" />{{ t('qualityOps.refresh') }}</button><button class="btn btn-primary" data-testid="quality-create-rule" @click="newPlan"><Icon name="plus" size="sm" />{{ t('qualityOps.create') }}</button></div>
+        <div class="heading-actions"><span class="updated-label" aria-live="polite">{{ store.updatedAt ? t('qualityOps.updatedAt', { time: clock(store.updatedAt) }) : t('qualityOps.loading') }}</span><button v-if="canCopyRules" class="btn btn-secondary" data-testid="quality-jev-settings" @click="showJevSettings = true">{{ t('qualityOps.jevSettings.title') }}</button><button v-if="canCopyRules" class="btn btn-secondary" data-testid="quality-patrol-settings" @click="showPatrol = true"><Icon name="bell" size="sm" />{{ t('qualityOps.patrol.title') }}</button><button class="btn btn-secondary" :disabled="refreshing" @click="load"><Icon name="refresh" size="sm" :class="{ 'animate-spin': refreshing }" />{{ t('qualityOps.refresh') }}</button><button class="btn btn-primary" data-testid="quality-create-rule" @click="newPlan"><Icon name="plus" size="sm" />{{ t('qualityOps.create') }}</button></div>
       </div>
       <div v-if="error || notice" class="workspace-message" :class="error ? 'message-error' : 'message-success'" :role="error ? 'alert' : 'status'">{{ error || notice }}<button :aria-label="t('qualityOps.dismiss')" @click="error = ''; notice = ''"><Icon name="x" size="sm" /></button></div>
       <div class="workspace-summary">
@@ -74,6 +74,7 @@
     </div>
 
     <!-- Existing rule editor moves into a focused drawer instead of shifting both lists. -->
+    <QualityJevDialog v-if="showJevSettings && canCopyRules" :key="auth.user?.id" @close="showJevSettings = false" @saved="showJevSettings = false; notice = t('accountOps.settingsSaved')" />
     <QualityPatrolDialog v-if="showPatrol && canCopyRules" :key="auth.user?.id" @close="showPatrol = false" @saved="showPatrol = false; notice = t('accountOps.settingsSaved')" />
     <BaseDialog :show="showForm" :title="savingPreset ? t(editingPreset ? 'qualityOps.editPreset' : 'qualityOps.savePreset') : copying ? t('qualityOps.copy') : bulkEditing ? t('qualityOps.bulkEditTitle', { count: bulkRuleIds.length }) : editingTemplate ? t('qualityOps.editTemplate') : editing ? t('qualityOps.edit') : t('qualityOps.create')" placement="right" width="wide" :close-on-escape="!busy && !deleteTargets.length && !templateDeleteTarget && !discardPrompt" @close="closeForm">
       <p v-if="error" role="alert" class="editor-error">{{ error }}</p>
@@ -301,6 +302,7 @@ import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import QualityJevDialog from '@/components/admin/operations/QualityJevDialog.vue'
 import QualityPatrolDialog from '@/components/admin/operations/QualityPatrolDialog.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
@@ -376,6 +378,7 @@ const applyingReuse = ref(false)
 const reusablePlans = computed(() => plans.value.filter(plan => plan.pelican_config?.quality && plan.pelican_config.quality.action !== 'openai_two_fa_admission'))
 const sourceAccounts = computed(() => [...new Map(reusablePlans.value.map(plan => [plan.account_id, { id: plan.account_id, name: name(plan) }] as const)).values()])
 const sourceRules = computed(() => reusablePlans.value.filter(plan => String(plan.account_id) === sourceAccountId.value))
+const showJevSettings = ref(false)
 const showPatrol = ref(false)
 const canCopyRules = computed(() => auth.user?.role === 'admin')
 // 正在编辑的分组规则 id，和 editing（单条账号规则）互斥；planTemplate：账号规则 id → 建它的分组规则 id。

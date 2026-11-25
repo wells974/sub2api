@@ -18,18 +18,19 @@ const qualityJevConfidence = 0.9 // Uncalibrated gate, unrelated to audit thresh
 type qualityJevJudge struct {
 	// Reuse config/proxy/rotation algorithms with separate health and cursor:
 	// quality calls must not freeze or alter the audit's key pool.
+	settings    SettingRepository
 	profile     *ContentModerationService
 	client      func(context.Context, *ContentModerationConfig) (*http.Client, error)
 	validateURL func(string) (string, error)
 	slots       chan struct{}
 }
 
-func newQualityJevJudge(moderation *ContentModerationService, tests *AccountTestService) *qualityJevJudge {
-	if moderation == nil || tests == nil || tests.cfg == nil {
+func newQualityJevJudge(settings SettingRepository, proxies ProxyRepository, tests *AccountTestService) *qualityJevJudge {
+	if settings == nil || tests == nil || tests.cfg == nil {
 		return nil
 	}
-	profile := &ContentModerationService{settingRepo: moderation.settingRepo, proxyRepo: moderation.proxyRepo, keyHealth: make(map[string]*contentModerationKeyHealth)}
-	j := &qualityJevJudge{profile: profile, validateURL: tests.validateUpstreamBaseURL, slots: make(chan struct{}, 4)}
+	profile := &ContentModerationService{proxyRepo: proxies, keyHealth: make(map[string]*contentModerationKeyHealth)}
+	j := &qualityJevJudge{settings: settings, profile: profile, validateURL: tests.validateUpstreamBaseURL, slots: make(chan struct{}, 4)}
 	j.client = func(ctx context.Context, cfg *ContentModerationConfig) (*http.Client, error) {
 		proxyURL := ""
 		if cfg.ProxyID != nil {
@@ -52,31 +53,28 @@ func newQualityJevJudge(moderation *ContentModerationService, tests *AccountTest
 }
 
 func (j *qualityJevJudge) config(ctx context.Context) (*ContentModerationConfig, string) {
-	if j == nil || j.profile == nil || j.profile.settingRepo == nil {
+	if j == nil || j.settings == nil {
 		return nil, "judge_jev_not_configured"
 	}
-	// Same stored settings and parser as auditing; no runtime snapshot refresh,
-	// request audit, hash lookup, queue, notification or penalty side effects.
-	values, err := j.profile.settingRepo.GetMultiple(ctx, []string{SettingKeyContentModerationConfig, SettingKeyRiskControlEnabled})
+	saved, _, err := loadQualityJevSettings(ctx, j.settings)
 	if err != nil {
 		return nil, "judge_jev_config_unavailable"
 	}
-	cfg, err := parseContentModerationConfig(values[SettingKeyContentModerationConfig])
-	if err != nil {
-		return nil, "judge_jev_config_unavailable"
-	}
-	if cfg.TypeSafe == nil || len(cfg.TypeSafe.APIKeys) == 0 {
-		return nil, "judge_jev_not_configured"
-	}
-	if !cfg.Enabled || cfg.Mode == ContentModerationModeOff || values[SettingKeyRiskControlEnabled] != "true" {
+	if !saved.Enabled {
 		return nil, "judge_jev_disabled"
 	}
-	cfg = cfg.effectiveEngine(ContentModerationEngineTypeSafe)
-	cfg.normalize(ContentModerationEngineTypeSafe)
-	if cfg.Model != typesafe.JevLatestModel {
+	if len(saved.TypeSafe.APIKeys) == 0 {
+		return nil, "judge_jev_not_configured"
+	}
+	p := saved.TypeSafe
+	if p.Model != typesafe.JevLatestModel {
 		return nil, "judge_jev_invalid_config"
 	}
-	return cfg, ""
+	return &ContentModerationConfig{
+		Engine: ContentModerationEngineTypeSafe, Model: p.Model,
+		BaseURL: p.BaseURL, APIKeys: p.APIKeys, APIKeyBaseURLs: p.APIKeyBaseURLs,
+		ProxyID: p.ProxyID, RetryCount: p.RetryCount, TimeoutMS: p.TimeoutMS,
+	}, ""
 }
 
 func qualityJevInput(cfg *PelicanTestConfig, answer string) (typesafe.Request, bool) {
@@ -139,7 +137,7 @@ func (s *QualityJudgeService) judgeJev(ctx context.Context, cfg *PelicanTestConf
 		result.Reason = reason
 		return result
 	}
-	// Audit retry budget, capped at three attempts under one deadline.
+	// Grading retry budget, capped at three attempts under one deadline.
 	attempts := min(initial.RetryCount+1, 3)
 	for attempt := 0; attempt < attempts; attempt++ {
 		if ctx.Err() != nil {

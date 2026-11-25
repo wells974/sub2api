@@ -30,18 +30,16 @@ func qualityJevReply(label string, confidence float64) string {
 
 func qualityJevFixture(t *testing.T, transport qualityJevTransport) (*QualityJudgeService, *PelicanTestConfig, *ContentModerationService, *contentModerationTestSettingRepo) {
 	t.Helper()
-	cfg := defaultContentModerationConfig()
-	cfg.Enabled = true
-	cfg.Mode = ContentModerationModeObserve
-	cfg.TypeSafe = moderationEngineDefaults(ContentModerationEngineTypeSafe)
-	cfg.TypeSafe.APIKeys = []string{"synthetic-first", "synthetic-second"}
-	cfg.TypeSafe.TimeoutMS = 1000
-	cfg.TypeSafe.APIKeyBaseURLs = map[string]string{scopedModerationKeyHash("synthetic-first", ContentModerationEngineTypeSafe): "https://first.example/v1"}
+	cfg := qualityJevSettings{Enabled: true, TypeSafe: &qualityJevConnection{
+		Model: typesafe.JevLatestModel, BaseURL: typesafe.DefaultBaseURL, TimeoutMS: 1000, RetryCount: 2,
+		APIKeys:        []string{"synthetic-first", "synthetic-second"},
+		APIKeyBaseURLs: map[string]string{scopedModerationKeyHash("synthetic-first", ContentModerationEngineTypeSafe): "https://first.example/v1"},
+	}}
 	body, err := json.Marshal(cfg)
 	require.NoError(t, err)
-	settings := &contentModerationTestSettingRepo{values: map[string]string{SettingKeyContentModerationConfig: string(body), SettingKeyRiskControlEnabled: "true"}}
+	settings := &contentModerationTestSettingRepo{values: map[string]string{SettingKeyQualityJev: string(body), SettingKeyRiskControlEnabled: "false", SettingKeyContentModerationConfig: `{"enabled":false,"mode":"off"}`}}
 	audit := &ContentModerationService{settingRepo: settings, keyHealth: map[string]*contentModerationKeyHealth{}}
-	judge := newQualityJevJudge(audit, &AccountTestService{cfg: &config.Config{}})
+	judge := newQualityJevJudge(audit.settingRepo, audit.proxyRepo, &AccountTestService{cfg: &config.Config{}})
 	judge.validateURL = func(s string) (string, error) { return s, nil }
 	judge.client = func(context.Context, *ContentModerationConfig) (*http.Client, error) {
 		return &http.Client{Transport: transport}, nil
@@ -97,30 +95,26 @@ func TestQualityJevNativeIsolationAndUnknownSafety(t *testing.T) {
 }
 
 func TestQualityJevDisabledAndMissingConfigNeverCalls(t *testing.T) {
-	for _, which := range []string{"missing", "disabled", "off", "risk_off", "invalid_model", "read_error"} {
+	for _, which := range []string{"missing", "disabled", "invalid_model", "read_error"} {
 		t.Run(which, func(t *testing.T) {
 			svc, cfg, _, settings := qualityJevFixture(t, func(*http.Request) (*http.Response, error) { t.Fatal("must not call"); return nil, nil })
-			var saved ContentModerationConfig
-			require.NoError(t, json.Unmarshal([]byte(settings.values[SettingKeyContentModerationConfig]), &saved))
+			var saved qualityJevSettings
+			require.NoError(t, json.Unmarshal([]byte(settings.values[SettingKeyQualityJev]), &saved))
 			want := "judge_jev_disabled"
 			switch which {
 			case "missing":
-				saved.TypeSafe = nil
+				saved.TypeSafe.APIKeys = nil
 				want = "judge_jev_not_configured"
 			case "disabled":
 				saved.Enabled = false
-			case "off":
-				saved.Mode = ContentModerationModeOff
-			case "risk_off":
-				settings.values[SettingKeyRiskControlEnabled] = "false"
 			case "invalid_model":
 				saved.TypeSafe.Model = "ordinary-chat"
 				want = "judge_jev_invalid_config"
 			}
 			body, _ := json.Marshal(saved)
-			settings.values[SettingKeyContentModerationConfig] = string(body)
+			settings.values[SettingKeyQualityJev] = string(body)
 			if which == "read_error" {
-				settings.values[SettingKeyContentModerationConfig] = "{"
+				settings.values[SettingKeyQualityJev] = "{"
 				want = "judge_jev_config_unavailable"
 			}
 			got := svc.Judge(t.Context(), 1, cfg, "21")
@@ -205,12 +199,12 @@ func TestQualityJevCancellationTimeoutAndConcurrency(t *testing.T) {
 			return nil, req.Context().Err()
 		})}, nil
 	}
-	var saved ContentModerationConfig
-	require.NoError(t, json.Unmarshal([]byte(settings.values[SettingKeyContentModerationConfig]), &saved))
+	var saved qualityJevSettings
+	require.NoError(t, json.Unmarshal([]byte(settings.values[SettingKeyQualityJev]), &saved))
 	saved.TypeSafe.TimeoutMS = 1
 	body, err := json.Marshal(saved)
 	require.NoError(t, err)
-	settings.values[SettingKeyContentModerationConfig] = string(body)
+	settings.values[SettingKeyQualityJev] = string(body)
 	require.Equal(t, "judge_jev_timeout", svc.Judge(t.Context(), 1, cfg, "21").Reason)
 }
 
@@ -247,12 +241,12 @@ func TestQualityJevURLPolicyAndNoAuditMutation(t *testing.T) {
 	validator := &AccountTestService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: true, UpstreamHosts: []string{"api.typesafe.ai"}}}}}
 	svc.jev.validateURL = validator.validateUpstreamBaseURL
 	for _, base := range []string{"https://127.0.0.1", "https://forbidden.example", "https://api.typesafe.ai?key=synthetic-query", "https://user:secret@api.typesafe.ai", "http://api.typesafe.ai"} {
-		var saved ContentModerationConfig
-		require.NoError(t, json.Unmarshal([]byte(settings.values[SettingKeyContentModerationConfig]), &saved))
+		var saved qualityJevSettings
+		require.NoError(t, json.Unmarshal([]byte(settings.values[SettingKeyQualityJev]), &saved))
 		saved.TypeSafe.BaseURL = base
 		saved.TypeSafe.APIKeyBaseURLs = nil
 		body, _ := json.Marshal(saved)
-		settings.values[SettingKeyContentModerationConfig] = string(body)
+		settings.values[SettingKeyQualityJev] = string(body)
 		got := svc.Judge(t.Context(), 1, cfg, "21")
 		require.Equal(t, "judge_jev_invalid_endpoint", got.Reason)
 		require.NotContains(t, got.Reason, "secret")
@@ -261,7 +255,7 @@ func TestQualityJevURLPolicyAndNoAuditMutation(t *testing.T) {
 	require.Empty(t, audit.keyHealth)
 	require.Nil(t, audit.runtimeSnapshot.Load())
 	// Production transport rejects redirects without touching audit clients.
-	production := newQualityJevJudge(audit, validator)
+	production := newQualityJevJudge(audit.settingRepo, audit.proxyRepo, validator)
 	client, err := production.client(t.Context(), defaultContentModerationConfig())
 	require.NoError(t, err)
 	require.ErrorIs(t, client.CheckRedirect(&http.Request{}, nil), http.ErrUseLastResponse)
@@ -273,12 +267,12 @@ func TestQualityJevRotationReloadsSavedCredentials(t *testing.T) {
 	svc, cfg, audit, repo := qualityJevFixture(t, func(req *http.Request) (*http.Response, error) {
 		calls++
 		if calls == 1 {
-			var saved ContentModerationConfig
-			require.NoError(t, json.Unmarshal([]byte(settings.values[SettingKeyContentModerationConfig]), &saved))
+			var saved qualityJevSettings
+			require.NoError(t, json.Unmarshal([]byte(settings.values[SettingKeyQualityJev]), &saved))
 			saved.TypeSafe.APIKeys = []string{"synthetic-rotated"}
 			saved.TypeSafe.APIKeyBaseURLs = nil
 			body, _ := json.Marshal(saved)
-			settings.values[SettingKeyContentModerationConfig] = string(body)
+			settings.values[SettingKeyQualityJev] = string(body)
 			return &http.Response{StatusCode: 401, Body: io.NopCloser(strings.NewReader("secret provider body"))}, nil
 		}
 		require.Equal(t, "Bearer synthetic-rotated", req.Header.Get("Authorization"))

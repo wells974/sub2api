@@ -166,7 +166,7 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 }
 
 // Observers may manage scoped connectivity tests, but cannot opt accounts into
-// shared audit credentials or enable a saved Jev rule through that older API.
+// shared grading credentials or enable a saved Jev rule through that older API.
 func qualityJudgeAccess(c *gin.Context, configs ...*service.PelicanTestConfig) bool {
 	if _, observer := service.ObserverGroupIDs(c.Request.Context()); observer {
 		for _, cfg := range configs {
