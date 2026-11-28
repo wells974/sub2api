@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/stretchr/testify/require"
 )
 
@@ -236,4 +237,15 @@ func TestOAuthDegradationNativeAutomaticModelSync(t *testing.T) {
 			require.Equal(t, 1, repo.applyCalls)
 		})
 	}
+}
+
+func TestPostCreateSyncSkipsIndependentExcelGrant(t *testing.T) {
+	svc, repo, upstream := modelMappingSyncFixture(http.StatusOK, `{"models":[{"slug":"gpt-6-luna"}]}`)
+	repo.account.Type = AccountTypeOAuth
+	repo.account.Credentials = map[string]any{"access_token": "fixture", "client_id": openai.ExcelClientID}
+	result, err := svc.SyncUpstreamModelCatalogWithOptions(t.Context(), repo.account, UpstreamModelSyncOptions{Apply: true, AfterCreate: true})
+	require.NoError(t, err)
+	require.Equal(t, "account_policy", result.Skipped)
+	require.Empty(t, upstream.requests)
+	require.Zero(t, repo.applyCalls)
 }

@@ -43,6 +43,23 @@ beforeEach(() => {
  vi.mocked(getAll).mockResolvedValue([{ id: 5, name: 'OpenAI test', platform: 'openai', status: 'active' }, { id: 6, name: 'Anthropic test', platform: 'anthropic', status: 'active' }] as Group[])
 })
 describe('AutoConfigView', () => {
+ it('keeps group fallback editable when the global configuration fails to load', async () => {
+  state.auth.isAdmin = true
+  vi.mocked(getAutoConfig).mockRejectedValueOnce(new Error('global settings unavailable'))
+  vi.mocked(getGroupFallback).mockResolvedValue({ config: { enabled: false, revision: 'v1', rules: [] }, status: {} })
+  vi.mocked(getGroupFallbackOptions).mockResolvedValue([])
+  vi.mocked(saveGroupFallback).mockImplementation(async c => c)
+  const w = mount(AutoConfigView)
+  await flushPromises()
+  expect(w.find('[data-testid="oauth-handling-panels"]').exists()).toBe(false)
+  const panel = w.get('#group-fallback')
+  await panel.get('[role="switch"]').setValue(true)
+  await panel.get('form').trigger('submit')
+  await flushPromises()
+  expect(saveGroupFallback).toHaveBeenCalledWith({ enabled: true, revision: 'v1', rules: [] })
+  expect(saveAutoConfig).not.toHaveBeenCalled()
+  w.unmount()
+ })
  it('edits group fallback directly above BPS with an independent save', async () => {
   state.auth.isAdmin = true
   const groupConfig = { enabled: false, revision: 'v1', rules: [] }

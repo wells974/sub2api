@@ -28,3 +28,24 @@ func TestInboundBodySizeSurvivesPartialReadAndTaskHandoff(t *testing.T) {
 	ws := MeasureInboundBody(httptest.NewRequest(http.MethodGet, "/", nil))
 	require.Nil(t, InboundBodySize(ws.Context()))
 }
+
+func TestInboundBodySizeRequiresACompleteSuccessfulRead(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		contentLength int64
+		limit         int64
+	}{
+		{name: "early EOF", contentLength: 5, limit: 10},
+		{name: "over declared length", contentLength: 2, limit: 10},
+		{name: "over body limit", contentLength: 2, limit: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("abc"))
+			req.ContentLength = tc.contentLength
+			req.Body = http.MaxBytesReader(nil, req.Body, tc.limit)
+			req = MeasureInboundBody(req)
+			_, _ = io.ReadAll(req.Body)
+			require.Nil(t, InboundBodySize(req.Context()))
+		})
+	}
+}

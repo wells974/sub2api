@@ -12,13 +12,18 @@ type inboundSizeKey struct{}
 type measuredBody struct {
 	io.ReadCloser
 	expected, read int64
+	failed         bool
 	complete       *atomic.Int64
 }
 
 func (b *measuredBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	b.read += int64(n)
-	if err == io.EOF || (err == nil && b.expected > 0 && b.read == b.expected) {
+	if (err != nil && err != io.EOF) || (b.expected > 0 && b.read > b.expected) {
+		b.failed = true
+		b.complete.Store(-1)
+	}
+	if !b.failed && ((b.expected > 0 && b.read == b.expected) || (b.expected <= 0 && err == io.EOF)) {
 		b.complete.Store(b.read)
 	}
 	return n, err
@@ -33,7 +38,9 @@ func MeasureInboundBody(req *http.Request) *http.Request {
 	size.Store(-1)
 	req = req.WithContext(context.WithValue(req.Context(), inboundSizeKey{}, size))
 	if req.Body == http.NoBody {
-		size.Store(0)
+		if req.ContentLength <= 0 {
+			size.Store(0)
+		}
 	} else {
 		req.Body = &measuredBody{ReadCloser: req.Body, expected: req.ContentLength, complete: size}
 	}

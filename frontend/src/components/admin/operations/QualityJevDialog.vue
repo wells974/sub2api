@@ -30,11 +30,12 @@
           <label>{{ t('admin.riskControl.retryCount') }}<input v-model.number="draft.retry_count" class="input w-full" type="number" min="0" max="2" required /></label>
         </div>
         <label class="block">{{ t('admin.riskControl.proxy') }}
-          <select v-model="draft.proxy_id" class="input w-full">
+          <select v-model="draft.proxy_id" :disabled="proxyLoadFailed" class="input w-full">
             <option :value="null">{{ t('admin.accounts.noProxy') }}</option>
             <option v-if="draft.proxy_id && !proxies.some(p => p.id === draft?.proxy_id)" :value="draft.proxy_id">#{{ draft.proxy_id }}</option>
             <option v-for="proxy in proxies" :key="proxy.id" :value="proxy.id">{{ proxy.name }}</option>
           </select>
+          <span v-if="proxyLoadFailed" role="alert">{{ t('admin.proxies.failedToLoad') }}</span>
         </label>
       </fieldset>
     </form>
@@ -58,6 +59,7 @@ const emit = defineEmits<{ close: []; saved: [] }>()
 const { t } = useI18n()
 const draft = ref<JevSettings>()
 const proxies = ref<Proxy[]>([])
+const proxyLoadFailed = ref(false)
 const error = ref('')
 const loading = ref(true)
 const saving = ref(false)
@@ -67,9 +69,11 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [settings, options] = await Promise.all([getJevSettings(), getProxies()])
-    draft.value = settings
-    proxies.value = options
+    const [settings, options] = await Promise.allSettled([getJevSettings(), getProxies()])
+    if (settings.status === 'rejected') throw settings.reason
+    draft.value = settings.value
+    proxyLoadFailed.value = options.status === 'rejected'
+    proxies.value = options.status === 'fulfilled' ? options.value : []
   } catch (e) {
     error.value = extractApiErrorMessage(e, t('qualityOps.jevReasons.config_unavailable'))
   } finally {

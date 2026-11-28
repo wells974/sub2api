@@ -4748,9 +4748,10 @@ const step = ref(1)
 const syncModelsOnCreate = ref(false)
 const modelSyncComplete = ref(false)
 const { results: modelSyncResults, syncCreated, retry: retryModelSync } = useNewAccountModelSync(() => emit('models-synced'))
-const showNewModelSyncOption = computed(() => form.platform === 'openai' &&
+const showNewModelSyncOption = computed(() => form.platform === 'openai' && !isOpenAIBPSOAuth.value &&
   !['agent_identity', 'codex_pat'].includes(oauthFlowRef.value?.inputMethod ?? ''))
 
+const shouldSyncNewModels = computed(() => showNewModelSyncOption.value && syncModelsOnCreate.value)
 const modelSyncLoginBusy = ref(false)
 
 function finishOpenAICreation() {
@@ -7405,7 +7406,7 @@ const handleOpenAIExchange = async (authCode: string) => {
   if (!validateOpenAIAuthorizationProxy()) return
   if (!validateOpenAIRequestProxies()) return
 
-  modelSyncLoginBusy.value = syncModelsOnCreate.value
+  modelSyncLoginBusy.value = shouldSyncNewModels.value
   oauthClient.loading.value = true
   oauthClient.error.value = ''
 
@@ -7471,7 +7472,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         auto_pause_on_expired: autoPauseOnExpired.value
       })
       appStore.showSuccess(t('admin.accounts.accountCreated'))
-      if (syncModelsOnCreate.value) await syncCreated(account.id, form.name)
+      if (shouldSyncNewModels.value) await syncCreated(account.id, form.name)
       await createAutoBPSRules([account.id])
     }
 
@@ -7589,7 +7590,7 @@ const importTwoFACredential = async (credential: Record<string, unknown>, email:
   if (result.failed > 0) throw new Error('import_failed')
   if (result.created > 0) {
     const ids = createdImportAccountIds(result)
-    if (syncModelsOnCreate.value) {
+    if (shouldSyncNewModels.value) {
       for (const id of ids) await syncCreated(id, email, signal)
     }
     await createAutoBPSRules(ids, signal)
@@ -7643,7 +7644,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
     return
   }
 
-  modelSyncLoginBusy.value = syncModelsOnCreate.value
+  modelSyncLoginBusy.value = shouldSyncNewModels.value
   oauthClient.loading.value = true
   oauthClient.error.value = ''
 
@@ -7667,7 +7668,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
     })
     // 只给这次新建的账号建规则；已有账号被更新时不动它原有的规则。
     const createdIds = createdImportAccountIds(result)
-    if (syncModelsOnCreate.value && showNewModelSyncOption.value && !isAgentIdentityImportContent(trimmed)) {
+    if (shouldSyncNewModels.value && !isAgentIdentityImportContent(trimmed)) {
       for (const item of result.items ?? []) {
         if (item.action === 'created' && item.account_id) await syncCreated(item.account_id, item.name || form.name)
       }
@@ -7789,7 +7790,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
     return
   }
 
-  modelSyncLoginBusy.value = syncModelsOnCreate.value
+  modelSyncLoginBusy.value = shouldSyncNewModels.value
   oauthClient.loading.value = true
   oauthClient.error.value = ''
 
@@ -7858,7 +7859,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             auto_pause_on_expired: autoPauseOnExpired.value
           })
           createdIds.push(account.id)
-          if (syncModelsOnCreate.value) await syncCreated(account.id, accountName)
+          if (shouldSyncNewModels.value) await syncCreated(account.id, accountName)
         }
 
         successCount++

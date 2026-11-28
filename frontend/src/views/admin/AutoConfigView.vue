@@ -14,7 +14,7 @@
           <fieldset :disabled="saving" class="min-w-0"><OpenAIAPIKeyFallbackCard ref="fallbackCard" v-model="draft.openai_apikey_fallback" :groups="groups" :user-id="auth.user?.id" :status="fallbackStatus" :status-loading="fallbackStatusLoading" :status-failed="fallbackStatusFailed" @refresh-status="refreshFallbackStatus" /></fieldset>
         </div>
       </form>
-      <GroupFallbackPanel v-if="draft" />
+      <GroupFallbackPanel v-if="auth.isAdmin" :key="auth.user?.id" />
       <form v-if="draft" ref="settingsForm" class="space-y-5" @submit.prevent="save">
         <fieldset :disabled="saving" class="min-w-0"><BPSDefaultsCard v-model="draft.excel_bps" :groups="groups" /></fieldset>
         <fieldset :disabled="saving" class="min-w-0">

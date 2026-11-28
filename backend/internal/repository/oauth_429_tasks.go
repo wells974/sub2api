@@ -160,7 +160,7 @@ func (r *accountRepository) ObserveOAuth429(ctx context.Context, observation ser
 	if cfg.Revision != observation.Revision || requestModel == "" || !oauth429EligibleRequest(cfg, a, requestModel, model, observation.Endpoint, routing.CompactModel) {
 		return false, nil
 	}
-	epoch, validSince, err := oauth429AccountEpoch(ctx, tx, id)
+	epoch, err := oauth429AccountEpoch(ctx, tx, id)
 	if err != nil {
 		return false, err
 	}
@@ -169,7 +169,7 @@ func (r *accountRepository) ObserveOAuth429(ctx context.Context, observation ser
 	if started.IsZero() {
 		started = observation.At
 	}
-	if started.Before(routing.ValidSince) || observation.At.Before(routing.ValidSince) || started.Before(validSince) || observation.At.Before(validSince) || started.After(observation.At) || observation.At.After(now) || observation.At.Before(now.Add(-time.Hour)) {
+	if !epoch.admitsRequestStart(started, now, routing.ValidSince) || started.After(observation.At) || observation.At.After(now) || observation.At.Before(now.Add(-time.Hour)) {
 		return false, nil
 	}
 	task, err := oauth429Load(ctx, tx, id, model)
@@ -198,7 +198,7 @@ func (r *accountRepository) ObserveOAuth429(ctx context.Context, observation ser
 				return false, err
 			}
 		}
-		task = &service.OAuth429Task{AccountID: id, AccountEpoch: epoch, Model: model, Revision: cfg.Revision, RoutingRevision: routing.Revision, CompactModel: routing.CompactModel, Armed: true, State: "observing"}
+		task = &service.OAuth429Task{AccountID: id, AccountEpoch: epoch.number, Model: model, Revision: cfg.Revision, RoutingRevision: routing.Revision, CompactModel: routing.CompactModel, Armed: true, State: "observing"}
 		// A cold completed episode can be evicted after its samples expire.
 		// Keep it latched until a new non-pressure window is observed.
 		var previous int64
@@ -218,8 +218,8 @@ func (r *accountRepository) ObserveOAuth429(ctx context.Context, observation ser
 	} else if err != nil {
 		return false, err
 	}
-	if task.Revision != cfg.Revision || task.AccountEpoch != epoch || task.RoutingRevision != routing.Revision {
-		task.AccountEpoch = epoch
+	if task.Revision != cfg.Revision || task.AccountEpoch != epoch.number || task.RoutingRevision != routing.Revision {
+		task.AccountEpoch = epoch.number
 		task.Revision = cfg.Revision
 		task.State = "observing"
 		task.Armed = true
@@ -358,12 +358,12 @@ func (r *accountRepository) claimOAuth429(ctx context.Context, id int64, model s
 	if task.State != "pending" && task.State != "running" {
 		return nil, nil
 	}
-	epoch, _, err := oauth429AccountEpoch(ctx, tx, id)
+	epoch, err := oauth429AccountEpoch(ctx, tx, id)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	if task.RoutingRevision != routing.Revision || task.CompactModel != routing.CompactModel || task.AccountEpoch != epoch || !oauth429EligibleRequest(cfg, a, task.RequestModel, model, task.Endpoint, routing.CompactModel) || task.Revision != cfg.Revision || !now.Before(task.ExpiresAt) {
+	if task.RoutingRevision != routing.Revision || task.CompactModel != routing.CompactModel || task.AccountEpoch != epoch.number || !oauth429EligibleRequest(cfg, a, task.RequestModel, model, task.Endpoint, routing.CompactModel) || task.Revision != cfg.Revision || !now.Before(task.ExpiresAt) {
 		task.State = "cancelled"
 		if err = oauth429Save(ctx, tx, task); err != nil {
 			return nil, err
@@ -424,11 +424,11 @@ func (r *accountRepository) mutateOAuth429(ctx context.Context, claimed *service
 	if task.State != "running" || task.Lease != claimed.Lease || task.TriggerID != claimed.TriggerID || task.Generation != claimed.Generation || !now.Before(task.LeaseUntil) {
 		return nil
 	}
-	epoch, _, err := oauth429AccountEpoch(ctx, tx, claimed.AccountID)
+	epoch, err := oauth429AccountEpoch(ctx, tx, claimed.AccountID)
 	if err != nil {
 		return err
 	}
-	if task.RoutingRevision != routing.Revision || task.CompactModel != routing.CompactModel || task.AccountEpoch != epoch || task.AccountEpoch != claimed.AccountEpoch || !oauth429EligibleRequest(cfg, a, task.RequestModel, task.Model, task.Endpoint, routing.CompactModel) || task.Revision != cfg.Revision || !now.Before(task.ExpiresAt) {
+	if task.RoutingRevision != routing.Revision || task.CompactModel != routing.CompactModel || task.AccountEpoch != epoch.number || task.AccountEpoch != claimed.AccountEpoch || !oauth429EligibleRequest(cfg, a, task.RequestModel, task.Model, task.Endpoint, routing.CompactModel) || task.Revision != cfg.Revision || !now.Before(task.ExpiresAt) {
 		task.State = "cancelled"
 	} else if err = fn(tx, cfg, a, task); err != nil {
 		return err

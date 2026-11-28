@@ -65,6 +65,10 @@ func (s *AccountTestService) SyncUpstreamModelCatalogWithOptions(ctx context.Con
 	if account.gatewayProtocolsPending() && (options.Automatic || options.AfterCreate) {
 		return skippedUpstreamModelSync("account_policy", nil), nil
 	}
+	// Keep standalone Excel grant creation on its upstream path.
+	if options.AfterCreate && account.IsExcelOAuth() {
+		return skippedUpstreamModelSync("account_policy", nil), nil
+	}
 	// Credential shadows and explicit OAuth alias mode have a narrower account
 	// policy than their parent's full catalog; do not broaden that policy.
 	if account.IsCredentialShadow() || account.IsOpenAIModelMappingAliases() || account.hasOAuthInitialModelSelection() {

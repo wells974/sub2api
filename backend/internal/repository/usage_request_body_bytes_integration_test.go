@@ -31,6 +31,15 @@ func TestUsageBodySizeMigrationPreservesOnlyUnambiguousCompletedReads(t *testing
 	var got string
 	require.NoError(t, tx.QueryRow(`SELECT array_agg(request_body_bytes ORDER BY id)::text FROM usage_logs`).Scan(&got))
 	require.Equal(t, "{0,89,NULL,NULL,NULL}", got)
+
+	// Sites already upgraded upstream have no diagnostic source. Reapplying
+	// the backfill must retain the measured values and tolerate that absence.
+	_, err = tx.Exec("DROP TABLE pg_temp.request_timing_details")
+	require.NoError(t, err)
+	_, err = tx.Exec(string(migration))
+	require.NoError(t, err)
+	require.NoError(t, tx.QueryRow(`SELECT array_agg(request_body_bytes ORDER BY id)::text FROM usage_logs`).Scan(&got))
+	require.Equal(t, "{0,89,NULL,NULL,NULL}", got)
 }
 
 func TestUsageBodySizeAndCacheSurviveConcurrentDirectSettlementReplay(t *testing.T) {

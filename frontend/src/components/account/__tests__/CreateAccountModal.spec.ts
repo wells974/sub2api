@@ -737,8 +737,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await wrapper.get('[data-testid="openai-bps-oauth"]').trigger('click')
     expect(wrapper.find('[data-testid="bps-oauth-models"]').exists()).toBe(true)
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
-    await wrapper.get('[data-testid="sync-models-on-create"]').setValue(true)
-    syncUpstreamModelsMock.mockResolvedValueOnce({ skipped: 'throttled', models: [] })
+    expect(wrapper.find('[data-testid="sync-models-on-create"]').exists()).toBe(false)
     const flow = wrapper.getComponent(OAuthAuthorizationFlowStub)
     flow.vm.$emit('generate-url')
     await flushPromises()
@@ -754,8 +753,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       credentials: { access_token: 'excel-at', refresh_token: 'excel-rt', client_id: 'app_fnr0pYvVwwFDocDumLG3H2Bp' },
       extra: { openai_excel_bps: true, openai_excel_bps_models: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra'] }
     })
-    expect(syncUpstreamModelsMock.mock.calls.map(([id]) => id)).toEqual([42])
-    expect(wrapper.text()).toContain('admin.accounts.newModelSync.throttled')
+    expect(syncUpstreamModelsMock).not.toHaveBeenCalled()
   })
 
   it.each([0, 1, 2].flatMap(clicks => [

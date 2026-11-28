@@ -11,12 +11,25 @@ const oauth429DedupLimit = 8192
 
 var errOAuth429DedupCapacity = errors.New("oauth429 live request identity capacity exhausted")
 
-func oauth429AccountEpoch(ctx context.Context, tx *sql.Tx, id int64) (int64, time.Time, error) {
-	var epoch int64
-	var since time.Time
+type oauth429Epoch struct {
+	number      int64
+	validSince  time.Time
+	databaseNow time.Time
+}
+
+func oauth429AccountEpoch(ctx context.Context, tx *sql.Tx, id int64) (oauth429Epoch, error) {
+	var epoch oauth429Epoch
 	// Callers already hold the account row lock, shared with the epoch trigger.
-	err := tx.QueryRowContext(ctx, `SELECT epoch,valid_since FROM oauth_429_account_epochs WHERE account_id=$1`, id).Scan(&epoch, &since)
-	return epoch, since, err
+	err := tx.QueryRowContext(ctx, `SELECT epoch,valid_since,clock_timestamp() FROM oauth_429_account_epochs WHERE account_id=$1`, id).Scan(&epoch.number, &epoch.validSince, &epoch.databaseNow)
+	return epoch, err
+}
+
+func (e oauth429Epoch) admitsRequestStart(started, gatewayNow, routingSince time.Time) bool {
+	// The gateway measures request age at query return. Subtract it from the
+	// database clock used by both fences. Including the return trip
+	// conservatively rejects starts indistinguishable from a transition.
+	start := e.databaseNow.Add(started.Sub(gatewayNow))
+	return !start.Before(e.validSince) && !start.Before(routingSince)
 }
 
 // A duplicate never replaces the first accepted HTTP response, even after its
