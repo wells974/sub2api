@@ -289,6 +289,7 @@ export interface PublicSettings {
   pelican_showcase_enabled?: boolean
   /** When false, the whole user-facing subscription surface is hidden. Default true. */
   subscription_enabled: boolean
+  api_key_multi_group_enabled?: boolean
   /** Mirrors payment config BALANCE_PAYMENT_DISABLED; true = balance top-up closed (subscription-only site). */
   payment_balance_disabled: boolean
   model_plaza_enabled: boolean
@@ -1473,6 +1474,7 @@ export interface Account {
     upstream_billing_provider?: 'new_api'
     new_api_apply_usd_rate?: boolean
     upstream_billing_probe_enabled?: boolean
+    upstream_billing_group_sync_enabled?: boolean
     upstream_billing_rate_sync_enabled?: boolean
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
     codex_reset_credit_snapshot?: {
@@ -1501,7 +1503,7 @@ export interface Account {
   proxy_fallback_origin_name?: string | null
   concurrency: number
   load_factor?: number | null
-  current_concurrency?: number // Real-time concurrency count from Redis
+  current_concurrency?: number | null // Redis slot count; null means observation unavailable
   scheduler_score?: {
     base_score: number
     sticky_score?: number
@@ -1819,6 +1821,7 @@ export interface CreateAccountRequest {
   expires_at?: number | null
   auto_pause_on_expired?: boolean
   upstream_billing_probe_enabled?: boolean
+  upstream_billing_group_sync_enabled?: boolean
   confirm_mixed_channel_risk?: boolean
 }
 
@@ -1832,7 +1835,14 @@ export interface AccountGroupBinding {
   created_at: string
 }
 
+export interface UpstreamGroupSyncGuard {
+  source: string
+  name: string
+  notes: string | null
+}
+
 export interface UpdateAccountRequest {
+  upstream_group_guard?: UpstreamGroupSyncGuard
 	platform?: AccountPlatform
   name?: string
   notes?: string | null
@@ -1852,6 +1862,7 @@ export interface UpdateAccountRequest {
   expires_at?: number | null
   auto_pause_on_expired?: boolean
   upstream_billing_probe_enabled?: boolean
+  upstream_billing_group_sync_enabled?: boolean
   upstream_billing_rate_sync_enabled?: boolean
   confirm_mixed_channel_risk?: boolean
 }
@@ -2111,8 +2122,8 @@ export interface UsageLog {
     server_first_token_ms: number | null; server_duration_ms: number
     forward_first_token_ms: number | null; forward_duration_ms: number
   } | null
+  request_body_bytes?: number
   content_timing?: {
-    request_body_bytes?: number
     sse_event_first_ms?: number | null; semantic_first_ms?: number | null
     reasoning_first_ms: number | null; visible_text_first_ms: number | null; response_byte_first_ms: number | null
     status: string; source: string; scope: string; reasoning_streaming_capability: string; capability_source: string
@@ -2876,6 +2887,8 @@ export interface PelicanQuestion {
 }
 
 export interface PelicanTestConfig {
+  quality_http_status?: number
+  quality_429_streak?: number
   prompt_mode?: 'custom' | 'random'
   pelican_question?: PelicanQuestion
   actual_prompt?: string

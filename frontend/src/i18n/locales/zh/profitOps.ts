@@ -1,6 +1,11 @@
 export default {
   "accountUsageAttribution": "渠道按账号当前归属汇总。调整归属后，所选时段的账号小计随账号归入当前渠道。",
-  "accountUsageFormula": "用户扣费和账号计费取自账号「使用统计」。毛利润为用户扣费减账号计费，毛利率按合计金额计算。",
+  "accountUsageFormula": "按采购方式核算。优先采用已核对的结算金额；新请求使用请求时的采购配置，旧请求按当前配置估算。已计折扣的账号费用保留原值。毛利与毛利率仅统计已知成本部分。",
+  "imagePurchasePrices": "图片采购单价（账面单位／张，按规格选填）",
+  "pricedRequests": "已知成本 {known} / {total} 笔",
+  "costEvidence": "已结算成本 {settled} · 估算成本 {estimated} · 成本待核实收入 {unknown} · 按当前配置估算 {current} 笔",
+  "profitCost": "计入成本",
+  "accountProcurementSource": "含账号采购成本倍率",
   "accountUsageCost": "账号计费",
   "accountUsageIncome": "用户扣费",
   "accountUsageBuilding": "此时段的账号小计正在后台更新，请稍后刷新。",

@@ -22,6 +22,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/cyberevidence"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
@@ -539,7 +540,7 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if requestID, _ := parent.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 		base = context.WithValue(base, ctxkey.RequestID, strings.TrimSpace(requestID))
 	}
-	return requesttiming.With(base, requesttiming.From(parent))
+	return requesttiming.With(pkghttputil.CarryInboundBodySize(base, parent), requesttiming.From(parent))
 }
 
 // wrapUsageRecordTaskContext 包装计费任务：复制请求级 context 值，并接管请求的在途余额预留引用。
@@ -757,6 +758,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
+	service.PreserveOpenAIWSHandshakeClientSource(c, body)
 	setOpsRequestContext(c, "", false)
 	sessionHashBody := body
 	body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
@@ -4724,7 +4726,7 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		if failoverErr.ClientStatusCode == http.StatusRequestEntityTooLarge {
 			errType = "invalid_request_error"
 		}
-		h.handleExcelBPSClientError(c, failoverErr.ClientStatusCode, errType, string(failoverErr.Reason), failoverErr.ClientMessage, streamStarted)
+		h.handleStreamingAwareErrorWithCode(c, failoverErr.ClientStatusCode, errType, string(failoverErr.Reason), failoverErr.ClientMessage, streamStarted, false)
 		return
 	}
 	if failoverErr.IsOpenAIRequestBodyTooLarge() {
@@ -4787,7 +4789,7 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	// instead of passthrough rules or the upstream body.
 	if failoverErr.Reason == service.ExcelBPSRateLimitedReason {
 		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.ClientMessage, "")
-		h.handleExcelBPSClientError(c, failoverErr.ClientStatusCode, "rate_limit_error", string(failoverErr.Reason), failoverErr.ClientMessage, streamStarted)
+		h.handleStreamingAwareErrorWithCode(c, failoverErr.ClientStatusCode, "rate_limit_error", string(failoverErr.Reason), failoverErr.ClientMessage, streamStarted, false)
 		return
 	}
 	statusCode := failoverErr.StatusCode
@@ -4943,7 +4945,6 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 	message string,
 	streamStarted bool,
 	countTowardsSLA bool,
-	present ...func(string, string, string) (string, string, string),
 ) {
 	// body-signal compact 心跳可能已把响应头提交为 200：先停心跳（建立
 	// happens-before，接管 ResponseWriter），并升级为流内错误处理。
@@ -4955,9 +4956,6 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 			service.MarkOpsStreamFailure(c, errType, code, message, status)
 		} else {
 			service.MarkOpsStreamError(c, errType, message, status)
-		}
-		if len(present) > 0 {
-			errType, code, message = present[0](errType, code, message)
 		}
 		// /v1/responses 的严格 SDK（Codex CLI）要求终止事件必须属于
 		// response.completed/failed/incomplete/cancelled 集合。
@@ -4988,9 +4986,6 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 		return
 	}
 
-	if len(present) > 0 {
-		errType, code, message = present[0](errType, code, message)
-	}
 	// Normal case: return JSON response with proper status code
 	if code == "" {
 		h.errorResponse(c, status, errType, message)

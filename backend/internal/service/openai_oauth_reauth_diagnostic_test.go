@@ -92,26 +92,3 @@ func TestLocalProtocolDiagnosticIsBoundedAndPrivate(t *testing.T) {
 	// Existing workers and task errors do not require the optional protocol.
 	require.Equal(t, "password/TOTP protocol failed (exit 1)", sanitizeReauthError("password/TOTP protocol failed (exit 1)"))
 }
-
-func TestExcelProtocolDiagnosticSurvivesStoredTaskAndRejectsPrivateText(t *testing.T) {
-	for _, reason := range []string{"email_verification", "phone_verification", "unexpected_login_step", "totp_rejected"} {
-		raw := "Excel password/TOTP login failed (stage=mfa_challenge, reason=" + reason + ", exit=1)"
-		require.Equal(t, raw, sanitizeReauthError(raw))
-		task := safeReauthTask(&OpenAIOAuthReauthTaskRecord{OAuthProfile: "excel", Error: raw, Status: "failed", Stage: "failed"})
-		require.NotNil(t, task.Diagnostic)
-		require.Equal(t, reason, task.Diagnostic.Reason)
-		require.Equal(t, "mfa_challenge", task.Diagnostic.Stage)
-		require.Equal(t, 1, *task.Diagnostic.ExitCode)
-		require.Equal(t, "failed", task.Status)
-		if reason == "phone_verification" {
-			require.Equal(t, "complete_phone_verification", task.Failure.Action)
-		}
-		if reason == "email_verification" {
-			require.Equal(t, "complete_verification", task.Failure.Action)
-		}
-		for _, invalid := range []string{raw + " PRIVATE_TOKEN", raw + "\nPRIVATE_TOKEN", strings.Replace(raw, "mfa_challenge", "private_stage", 1), strings.Replace(raw, reason, "private_reason", 1), strings.Replace(raw, "exit=1", "exit=999", 1)} {
-			require.Equal(t, "Excel login failed; invalid diagnostic omitted", sanitizeReauthError(invalid))
-			require.Nil(t, safeReauthTask(&OpenAIOAuthReauthTaskRecord{Error: invalid}).Diagnostic)
-		}
-	}
-}

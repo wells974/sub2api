@@ -56,10 +56,10 @@ func TestReplayMatchesSemanticClientCallAndPreservesExactNativeItem(t *testing.T
 	call["id"] = "different-client-wire-id"
 	call["status"] = "in_progress"
 	call["arguments"] = ` { "nested": { "b": 2, "a": 1 }, "n": 9007199254740993 } `
-	if got := cache.getForCall("scope", text(call["call_id"]), call, false); !reflect.DeepEqual(got, native) {
+	if got := cache.getForCall("scope", text(call["call_id"]), call); !reflect.DeepEqual(got, native) {
 		t.Fatal("equivalent JSON arguments failed to retain the exact original native item")
 	}
-	if got := cache.getForCall("other-key-scope", text(call["call_id"]), call, false); got != nil {
+	if got := cache.getForCall("other-key-scope", text(call["call_id"]), call); got != nil {
 		t.Fatal("call signature bypassed cache owner isolation")
 	}
 	for _, change := range []object{
@@ -75,7 +75,7 @@ func TestReplayMatchesSemanticClientCallAndPreservesExactNativeItem(t *testing.T
 		for k, v := range change {
 			changed[k] = v
 		}
-		if cache.getForCall("scope", text(call["call_id"]), changed, false) != nil {
+		if cache.getForCall("scope", text(call["call_id"]), changed) != nil {
 			t.Fatalf("different or incomplete client call matched native history: %+v", change)
 		}
 	}
@@ -90,7 +90,7 @@ func TestCustomHistorySignaturePreservesExactRawInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache.put("scope", "call_1", native, first)
-	if cache.getForCall("scope", "call_1", first, false) == nil || cache.getForCall("scope", "call_1", changed, false) != nil {
+	if cache.getForCall("scope", "call_1", first) == nil || cache.getForCall("scope", "call_1", changed) != nil {
 		t.Fatal("custom history signature did not distinguish exact raw input")
 	}
 }

@@ -2,11 +2,11 @@ vi.mock('@/components/common/NewFeatureBadge.vue', () => ({ default: { template:
 vi.mock('@/api/admin/upstreamChannels', () => ({ listUpstreamChannels: vi.fn(), readChannelBindings: vi.fn(), bindChannelAccounts: vi.fn() }))
 import { readChannelBindings, listUpstreamChannels } from '@/api/admin/upstreamChannels'
 import UpstreamChannelSelector from '../UpstreamChannelSelector.vue'
-import { deleteTwoFALogin, getTwoFALogin, startTwoFALogin, startExcelTwoFALogin } from '@/api/admin/openaiRelogin'
+import { deleteTwoFALogin, getTwoFALogin, startTwoFALogin } from '@/api/admin/openaiRelogin'
 
 vi.mock('@/api/admin/openaiRelogin', async original => ({
   ...await original<typeof import('@/api/admin/openaiRelogin')>(),
-  startExcelTwoFALogin: vi.fn(), startTwoFALogin: vi.fn(), getTwoFALogin: vi.fn(), deleteTwoFALogin: vi.fn(),
+  startTwoFALogin: vi.fn(), getTwoFALogin: vi.fn(), deleteTwoFALogin: vi.fn(),
 }))
 
 vi.mock('@/api/admin/credentialEncryption', () => ({
@@ -30,6 +30,7 @@ const {
   exchangeCodeMock,
   refreshOpenAITokenMock,
   probeUpstreamBillingMock,
+  previewUpstreamGroup,
   syncUpstreamModelsMock,
   showWarningMock,
   importCodexSessionMock,
@@ -42,6 +43,7 @@ const {
   exchangeCodeMock: vi.fn(),
   refreshOpenAITokenMock: vi.fn(),
   probeUpstreamBillingMock: vi.fn(),
+  previewUpstreamGroup: vi.fn(),
   syncUpstreamModelsMock: vi.fn(),
   showWarningMock: vi.fn(),
   importCodexSessionMock: vi.fn(),
@@ -79,6 +81,7 @@ vi.mock('@/api/admin', () => ({
       exchangeCode: exchangeCodeMock,
       refreshOpenAIToken: refreshOpenAITokenMock,
       probeUpstreamBilling: probeUpstreamBillingMock,
+      previewUpstreamGroup,
       syncUpstreamModels: syncUpstreamModelsMock,
       checkMixedChannelRisk: vi.fn().mockResolvedValue({ has_risk: false }),
       importCodexSession: importCodexSessionMock,
@@ -479,22 +482,6 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     expect(wrapper.findComponent(OpenAITwoFAImport).exists()).toBe(false)
     expect(startTwoFALogin).not.toHaveBeenCalled()
-    await wrapper.get('[data-testid="openai-proxy-mode-single"]').setValue()
-    await wrapper.get('form#create-account-form').trigger('submit.prevent')
-    expect(wrapper.findComponent(OpenAITwoFAImport).exists()).toBe(true)
-  })
-  it('requires a fixed exit for initial BPS 2FA login before enabling request distribution', async () => {
-    const wrapper = mountModal([], false, [{ id: 11, name: 'Request proxy', status: 'active', expires_at: null }])
-    await selectButtonByText(wrapper, 'OpenAI')
-    await wrapper.get('[data-testid="openai-bps-oauth"]').trigger('click')
-    await wrapper.get('[data-testid="bps-login-two-fa"]').setValue()
-    await wrapper.get('[data-testid="openai-proxy-mode-request"]').setValue()
-    await wrapper.get('[data-testid="bps-proxy-trigger"]').trigger('click')
-    await wrapper.get('[data-testid="bps-proxy-11"]').setValue(true)
-    expect(wrapper.get('[data-testid="openai-proxy-two-fa-hint"]').text()).toBe('admin.accounts.openai.proxyTwoFAFirstImport')
-    await wrapper.get('form#create-account-form').trigger('submit.prevent')
-    expect(wrapper.findComponent(OpenAITwoFAImport).exists()).toBe(false)
-    expect(startExcelTwoFALogin).not.toHaveBeenCalled()
     await wrapper.get('[data-testid="openai-proxy-mode-single"]').setValue()
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     expect(wrapper.findComponent(OpenAITwoFAImport).exists()).toBe(true)
@@ -1007,36 +994,6 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(wrapper.get<HTMLInputElement>('[data-testid="sync-models-on-create"]').element.checked).toBe(false)
   })
 
-  it('creates an independent BPS account with automatic 2FA and does not enroll Codex re-login', async () => {
-    const wrapper = mountModal()
-    await selectButtonByText(wrapper, 'OpenAI')
-    await wrapper.get('[data-testid="openai-bps-oauth"]').trigger('click')
-    await wrapper.get('[data-testid="bps-login-two-fa"]').setValue()
-    expect(wrapper.get('[data-tour="account-form-name"]').attributes('required')).toBeUndefined()
-    await wrapper.get('form#create-account-form').trigger('submit.prevent')
-    await wrapper.get('[data-testid="sync-models-on-create"]').setValue(true)
-    syncUpstreamModelsMock.mockResolvedValue({ applied: true, models: ['model-a'] })
-    const importer = wrapper.getComponent(OpenAITwoFAImport)
-    expect(importer.props('excelOauth')).toBe(true)
-    expect(wrapper.findComponent(OAuthAuthorizationFlowStub).exists()).toBe(false)
-    const credential = { client_id: 'app_fnr0pYvVwwFDocDumLG3H2Bp', access_token: 'excel-at', refresh_token: 'excel-rt' }
-    const login = { email: 'bps@example.com', password: 'PRIVATE_PASSWORD', mfa_secret: 'PRIVATE_TOTP' }
-    await expect(importer.props('importCredential')(credential, login.email, login)).resolves.toBe('created')
-    const request = importCodexSessionMock.mock.calls[0]?.[0]
-    expect(request).toMatchObject({
-      content: JSON.stringify(credential), name: login.email, update_existing: false, skip_existing: true,
-      extra: { openai_excel_bps: true, openai_excel_bps_models: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra'] }
-    })
-    expect(request.initialize_openai_two_fa).toBeUndefined()
-    expect(JSON.stringify(request)).not.toContain('PRIVATE_')
-    expect(createCredentialOperationsMock).not.toHaveBeenCalled()
-    importCodexSessionMock.mockResolvedValueOnce({ created: 0, skipped: 1, failed: 0, items: [{ action: 'skipped', account_id: 42 }] })
-    await expect(importer.props('importCredential')(credential, login.email, login)).resolves.toBe('skipped')
-    await expect(importer.props('importCredential')({ ...credential, client_id: 'codex' }, login.email, login)).rejects.toThrow('invalid_excel_credentials')
-    expect(importCodexSessionMock).toHaveBeenCalledTimes(2)
-    expect(syncUpstreamModelsMock.mock.calls.map(([id]) => id)).toEqual([42])
-    expect(wrapper.emitted('created')).toHaveLength(1)
-  })
 
   it('retries operations enrollment for an already imported identity without reporting premature success', async () => {
     const wrapper = mountModal()
@@ -1222,6 +1179,45 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       wrapper.unmount()
       await flushPromises()
     }
+  })
+
+  it('fills the name and notes from the unsaved API key and its adaptive Chat URL', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Kimi')
+    await wrapper.get('[data-testid="cn-adaptive-base-url-chat_completions"]').setValue('https://relay.example/v1')
+    await wrapper.get('form input[type="password"]').setValue('test-key')
+    previewUpstreamGroup.mockResolvedValue({ name: '标准组', notes: '共享账号' })
+
+    await selectButtonByText(wrapper, 'admin.accounts.upstreamBilling.syncGroup')
+    await flushPromises()
+
+    expect(previewUpstreamGroup).toHaveBeenCalledWith({
+      platform: 'kimi', base_url: 'https://relay.example/v1', api_key: 'test-key', proxy_id: null
+    }, expect.anything())
+    expect(wrapper.get<HTMLInputElement>('[data-tour="account-form-name"]').element.value).toBe('标准组')
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('共享账号')
+    expect(createAccountMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('creates an API key account with group sync only after opt-in', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('[data-tour="account-form-name"]').setValue('local')
+    await wrapper.get('form input[type="password"]').setValue('synthetic-key')
+    const group = wrapper.get('[data-testid="upstream-billing-group-sync"]')
+    const probe = wrapper.get('[data-testid="upstream-billing-auto-probe"]')
+    expect(group.attributes('aria-checked')).toBe('false')
+    await probe.trigger('click')
+    await group.trigger('click')
+    expect(probe.attributes('aria-checked')).toBe('true')
+    await wrapper.get('#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(createAccountMock.mock.calls[0]?.[0]).toMatchObject({
+      upstream_billing_group_sync_enabled: true, upstream_billing_probe_enabled: true
+    })
+    wrapper.unmount()
   })
 
   it('can create a passthrough account with model filtering enabled', async () => {

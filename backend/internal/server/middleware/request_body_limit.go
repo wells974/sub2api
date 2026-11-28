@@ -15,7 +15,10 @@ func RequestBodyLimit(maxBytes int64, budgets ...*pkghttputil.BodyMemoryBudget) 
 			defer release()
 			c.Request = c.Request.WithContext(ctx)
 		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		if c.Request.Body != http.NoBody {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		}
+		c.Request = pkghttputil.MeasureInboundBody(c.Request)
 		c.Next()
 	}
 }

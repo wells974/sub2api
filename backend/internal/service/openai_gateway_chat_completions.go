@@ -152,6 +152,14 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return nil, admissionErr
 	}
 	account = latest
+	// Alias normalization must follow the payload shape: Responses-shaped
+	// Chat requests may bypass the typed converter and go straight upstream.
+	isResponsesShape := !gjson.GetBytes(body, "messages").Exists() && gjson.GetBytes(body, "input").Exists()
+	effortPath := "reasoning_effort"
+	if isResponsesShape {
+		effortPath = "reasoning.effort"
+	}
+	body = normalizeQwenRequestEffort(account, body, defaultMappedModel, effortPath)
 	proxyCtx, releaseProxy, proxyErr := s.beginOpenAIRequestProxy(ctx, c, account)
 	if proxyErr != nil {
 		return nil, proxyErr
@@ -202,7 +210,6 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	// Cursor compatibility: some clients send a Responses-shaped body to the
 	// /v1/chat/completions URL. Detect it before protocol routing so adaptive
 	// accounts never forward the body unchanged to a Chat Completions endpoint.
-	isResponsesShape := !gjson.GetBytes(body, "messages").Exists() && gjson.GetBytes(body, "input").Exists()
 	inbound := APIProtocolChatCompletions
 	if isResponsesShape {
 		inbound = APIProtocolResponses
@@ -536,6 +543,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 			)
 			return s.forwardAsRawChatCompletionsWithStartTime(ctx, c, account, body, defaultMappedModel, startTime)
 		}
+		if completeErrorBody && IsUpstreamContextRejection(resp.StatusCode, respBody) {
+			return nil, writeContextRejection(c, resp.StatusCode, true, "", nil)
+		}
 		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
 			return nil, foErr
 		}
@@ -548,6 +558,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		result, handleErr = s.handleChatStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime, len(body))
 	} else {
 		result, handleErr = s.handleChatBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
+	}
+	if result != nil && errors.Is(handleErr, errGatewayContextRejection) {
+		result.SLAExcluded = true
 	}
 	stampOpenAIResponsesUpstreamEndpoint(c, result)
 
@@ -843,6 +856,10 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 			writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", clientMsg)
 			return nil, fmt.Errorf("openai cyber_policy: %s", msg)
 		}
+		if explicitContextWindowError(payload) {
+			rejection := writeContextRejection(c, resp.StatusCode, true, account.Platform, payload)
+			return &OpenAIForwardResult{RequestID: requestID, Usage: usage, Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel, Duration: time.Since(startTime)}, rejection
+		}
 		message := openAICompatFailedResponseMessage(finalResponse)
 		if openAIStreamFailedEventShouldFailover(payload, message) {
 			return nil, s.newOpenAIStreamFailoverErrorWithModel(c, account, false, requestID, payload, message, upstreamModel, resp.Header)
@@ -1114,6 +1131,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					// finalizeStream 的 [DONE] 同样发不出去，统一抑制。
 					clientDisconnected = true
 				}
+				return true
+			}
+			if explicitContextWindowError(payloadBytes) {
+				streamNonFailoverErr = writeContextRejection(c, resp.StatusCode, true, account.Platform, payloadBytes)
 				return true
 			}
 			shouldFailover := openAIStreamFailedEventShouldFailover(payloadBytes, message)

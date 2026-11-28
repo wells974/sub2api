@@ -13,9 +13,7 @@ func WithCompactedWindow(ctx context.Context, upstream io.ReadCloser, window []a
 	reader, writer := io.Pipe()
 	go func() {
 		defer func() { _ = upstream.Close() }()
-		// Publish cancellation before Close unblocks the upstream reader with a
-		// competing closed-pipe error (or waits for slow transport cleanup).
-		stop := context.AfterFunc(ctx, func() { _ = writer.CloseWithError(ctx.Err()); _ = upstream.Close() })
+		stop := context.AfterFunc(ctx, func() { _ = upstream.Close(); _ = writer.CloseWithError(ctx.Err()) })
 		defer stop()
 		sequence := 0
 		inserted := false
@@ -76,22 +74,22 @@ func WithCompactedWindow(ctx context.Context, upstream io.ReadCloser, window []a
 				}
 			}
 			response, _ := p["response"].(object)
-			observed := eventUsage(p, response)
-			terminal := kind == "response.completed" || kind == "response.failed" || kind == "response.cancelled" || kind == "response.incomplete"
-			if !terminal && len(observed) > 0 {
-				progressiveUsage = maxReportedUsage(progressiveUsage, observed)
+			observed, _ := response["usage"].(object)
+			if observed == nil {
+				observed, _ = p["usage"].(object)
 			}
-			if terminal && response != nil {
+			if kind != "response.completed" && kind != "response.failed" && kind != "response.cancelled" && kind != "response.incomplete" {
+				copyNonzeroImageUsage(progressiveUsage, observed)
+			}
+			if response != nil && (kind == "response.completed" || kind == "response.failed" || kind == "response.cancelled" || kind == "response.incomplete") {
 				output, _ := response["output"].([]any)
 				response["output"] = append(append([]any{}, window...), output...)
-				current := observed
-				if !hasBilledUsage(current) && hasBilledUsage(progressiveUsage) {
+				current, _ := response["usage"].(object)
+				if !hasImageUsage(current) {
 					current = progressiveUsage
+					response["usage"] = current
 				}
-				response["usage"] = addRepairUsage(current, usage)
-				if _, ok := p["usage"].(object); ok {
-					p["usage"] = response["usage"]
-				}
+				mergeImageUsage(current, usage)
 			}
 			return emit(kind, p)
 		})
@@ -106,15 +104,45 @@ type imagePolicyStream struct {
 }
 
 func (s *imagePolicyStream) Close() error { _ = s.upstream.Close(); return s.PipeReader.Close() }
+func mergeImageUsage(dst, src object) {
+	for k, v := range src {
+		if child, ok := v.(object); ok {
+			target, _ := dst[k].(object)
+			if target == nil {
+				target = object{}
+				dst[k] = target
+			}
+			mergeImageUsage(target, child)
+			continue
+		}
+		var a, b json.Number
+		switch n := v.(type) {
+		case json.Number:
+			b = n
+		case float64:
+			b = json.Number(fmt.Sprint(n))
+		case int:
+			b = json.Number(fmt.Sprint(n))
+		default:
+			continue
+		}
+		switch n := dst[k].(type) {
+		case json.Number:
+			a = n
+		case float64:
+			a = json.Number(fmt.Sprint(n))
+		case int:
+			a = json.Number(fmt.Sprint(n))
+		}
+		x, _ := a.Int64()
+		y, _ := b.Int64()
+		dst[k] = x + y
+	}
+}
 
 // ReadImageCompaction observes reported usage even when no successful terminal
 // arrives. The caller never sees intermediate text or executable tool events.
 func ReadImageCompaction(reader io.Reader, observe func([]byte)) (map[string]any, error) {
-	return ReadImageCompactionWithContext(context.Background(), reader, observe)
-}
-
-// ReadImageCompactionWithContext also observes private upstream failures.
-func ReadImageCompactionWithContext(ctx context.Context, reader io.Reader, observe func([]byte)) (map[string]any, error) {
 	var response object
 	completed := false
 	progressiveUsage := object{}
@@ -130,32 +158,32 @@ func ReadImageCompactionWithContext(ctx context.Context, reader io.Reader, obser
 			observe(raw)
 		}
 		r, _ := p["response"].(object)
-		u := eventUsage(p, r)
+		u, _ := r["usage"].(object)
+		if u == nil {
+			u, _ = p["usage"].(object)
+		}
+		copyNonzeroImageUsage(progressiveUsage, u)
 		kind := text(p["type"])
 		if kind == "" {
 			kind = event
 		}
-		observeRateLimit(ctx, "image_compaction", kind, p)
 		item, _ := p["item"].(object)
 		if isTool(item) || isToolEvent(kind) {
 			return fmt.Errorf("image compaction returned an unexpected tool event")
 		}
 		switch kind {
 		case "response.completed", "response.failed", "response.cancelled", "response.incomplete", "error":
-			response = r
-			if response != nil && u != nil {
-				response["usage"] = u
-			}
+			response, _ = p["response"].(object)
 			completed = kind == "response.completed"
 			return io.EOF
-		}
-		if len(u) > 0 {
-			progressiveUsage = maxReportedUsage(progressiveUsage, u)
 		}
 		return nil
 	})
 	if response != nil {
-		restoreRoundUsage(response, progressiveUsage)
+		u, _ := response["usage"].(object)
+		if !hasImageUsage(u) {
+			response["usage"] = progressiveUsage
+		}
 	}
 	if err != nil && err != io.EOF {
 		return response, err
@@ -164,4 +192,40 @@ func ReadImageCompactionWithContext(ctx context.Context, reader io.Reader, obser
 		return response, fmt.Errorf("image history compaction did not complete")
 	}
 	return response, nil
+}
+
+// Positive progressive fields are snapshots; a nonzero terminal is authoritative.
+func hasImageUsage(usage object) bool {
+	for _, v := range usage {
+		if nested, ok := v.(object); ok {
+			if hasImageUsage(nested) {
+				return true
+			}
+			continue
+		}
+		if n, ok := v.(json.Number); ok {
+			f, _ := n.Float64()
+			if f > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+func copyNonzeroImageUsage(dst, src object) {
+	for k, v := range src {
+		if nested, ok := v.(object); ok {
+			target, _ := dst[k].(object)
+			if target == nil {
+				target = object{}
+				dst[k] = target
+			}
+			copyNonzeroImageUsage(target, nested)
+		} else if n, ok := v.(json.Number); ok {
+			f, _ := n.Float64()
+			if f > 0 {
+				dst[k] = v
+			}
+		}
+	}
 }

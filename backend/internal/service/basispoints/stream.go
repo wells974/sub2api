@@ -55,7 +55,6 @@ func (b *Bridge) StreamWithRepair(ctx context.Context, upstream io.ReadCloser, r
 // StreamWithRepairs separates transport correction, first-turn regeneration and
 // safe unknown-target continuations. None can dispatch unvalidated tools.
 func (b *Bridge) StreamWithRepairs(ctx context.Context, upstream io.ReadCloser, repair ToolRepairFunc, unknown RepairToolCall) io.ReadCloser {
-	repair, unknown = schemaRepairCallbacks(ctx, repair, unknown)
 	ctx, cancel := context.WithCancel(ctx)
 	reader, writer := io.Pipe()
 	body := &streamBody{PipeReader: reader, upstream: upstream, cancel: cancel}
@@ -76,7 +75,6 @@ func (b *Bridge) StreamWithRepairs(ctx context.Context, upstream io.ReadCloser, 
 		}
 	}
 	go func() {
-		defer finishSchemaRepairStream(ctx)
 		defer cancel()
 		stop := context.AfterFunc(ctx, func() {
 			_ = writer.CloseWithError(ctx.Err())
@@ -96,7 +94,7 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 	visibleContent := false
 	rejectedTool, repairSkippedReason := "", ""
 	failureStage := "bridge_protocol_conversion"
-	var terminalResponse, progressiveUsage object
+	var terminalResponse object
 	emitted := make(map[string]bool)
 	pendingTools := make(map[string]bool)
 	emit := func(kind string, payload object) error {
@@ -108,7 +106,7 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 			return err
 		}
 		_, err = fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", kind, raw)
-		if err == nil && b.clientStream && (hasVisibleStreamContent(kind, payload) || schemaRepairVisibleContent(ctx, payload)) {
+		if err == nil && b.clientStream && hasVisibleStreamContent(kind, payload) {
 			visibleContent = true
 		}
 		return err
@@ -119,13 +117,6 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 			return nil
 		}
 		emitted[id] = true
-		if item["type"] == "tool_search_call" {
-			added := object{"type": "tool_search_call", "id": id, "call_id": item["call_id"], "execution": "client", "status": "in_progress", "arguments": object{}}
-			if err := emit("response.output_item.added", object{"output_index": index, "item": added}); err != nil {
-				return err
-			}
-			return emit("response.output_item.done", object{"output_index": index, "item": item})
-		}
 		field, prefix := "arguments", "response.function_call_arguments"
 		if text(item["type"]) == "custom_tool_call" {
 			field, prefix = "input", "response.custom_tool_call_input"
@@ -158,20 +149,8 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 		if kind == "" {
 			kind = event
 		}
-		observeUpstreamLatency(ctx, kind, data)
-		observeRateLimit(ctx, "generation", kind, payload)
-		response, _ := payload["response"].(object)
-		if kind == "response.completed" && response != nil {
-			if usage, ok := payload["usage"].(object); ok {
-				response["usage"] = usage
-			}
-		} else if repair != nil || unknown != nil {
-			if usage := eventUsage(payload, response); len(usage) > 0 {
-				progressiveUsage = maxReportedUsage(progressiveUsage, usage)
-			}
-		}
 		if b.structured != nil && kind == "response.completed" {
-			if response == nil {
+			if response, ok := payload["response"].(object); !ok || response == nil {
 				return fmt.Errorf("basispoints structured output is missing its terminal response")
 			}
 		}
@@ -194,7 +173,7 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 			pendingTools[text(item["call_id"])+"\x00"+text(item["id"])] = true
 			return nil
 		}
-		if response != nil {
+		if response, ok := payload["response"].(object); ok {
 			if b.structured != nil {
 				config, _ := response["text"].(object)
 				if config == nil {
@@ -223,7 +202,6 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 				repairStart := -1
 				validation := b.validateToolResponse(response)
 				if validation != nil {
-					restoreRoundUsage(response, progressiveUsage)
 					failureStage = "bridge_tool_validation"
 				}
 				var rejected unknownClientToolError
@@ -269,17 +247,14 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 							return err
 						}
 					}
-				} else if err := b.translateCompletedWithSchema(ctx, response, repair, visibleContent); err != nil {
+				} else if err := b.translateCompleted(ctx, response, repair); err != nil {
 					return err
 				}
 
-				if _, ok := payload["usage"].(object); ok {
-					payload["usage"] = response["usage"]
-				}
 				output, _ = response["output"].([]any)
 				for i, raw := range output {
 					item, _ := raw.(object)
-					if isTool(item) || item["type"] == "tool_search_call" {
+					if isTool(item) {
 						if err := emitTool(item, i); err != nil {
 							return err
 						}
@@ -319,16 +294,6 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 		return nil
 	})
 	if err != nil && !errors.Is(err, io.EOF) {
-		var searchValidation *searchToolValidationError
-		if errors.As(err, &searchValidation) {
-			terminalResponse = searchValidation.response
-			failureStage, repairSkippedReason = "bridge_tool_validation", "search_no_repair"
-			var rejected unknownClientToolError
-			if errors.As(err, &rejected) {
-				rejectedTool = rejected.name
-			}
-			err = protocolError{err}
-		}
 		var invalid protocolError
 		if errors.Is(err, io.ErrClosedPipe) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &invalid) {
 			return err
@@ -336,7 +301,6 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 		failed := object{
 			"status": "failed", "output": []any{},
 		}
-		b.observeTerminalFailure(err)
 		failure := &BridgeFailure{Message: err.Error(), FailureStage: failureStage,
 			RejectedTool: rejectedTool, RepairSkippedReason: repairSkippedReason}
 		var argumentError toolArgumentsSchemaError

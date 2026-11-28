@@ -15,16 +15,6 @@ import (
 type WebSearchFunc func(context.Context, string) (SearchResult, error)
 type SearchContinuationFunc func(context.Context, []byte) (io.ReadCloser, error)
 
-// Keep local validation failures in-process across the search pipe. Encoding
-// them as upstream SSE errors loses diagnostics and misattributes failures;
-// accepting a wire marker instead would let upstream forge local attribution.
-type searchToolValidationError struct {
-	error
-	response object
-}
-
-func (e *searchToolValidationError) Unwrap() error { return e.error }
-
 // StreamWithSearch keeps one downstream response while executing unexposed
 // server search calls. It uses the regular bridge for final client tool/schema
 // validation. Search turns cannot enter generic tool repair or I/O replay.
@@ -77,10 +67,6 @@ func (b *Bridge) runWebSearch(ctx context.Context, upstream io.ReadCloser, write
 	if err == nil || ctx.Err() != nil || errors.Is(err, io.ErrClosedPipe) {
 		return err
 	}
-	var validation *searchToolValidationError
-	if errors.As(err, &validation) {
-		return err
-	}
 	// A search/model continuation failure cannot look like a successful HTTP 200.
 	// Keep observed model usage; upstream bodies and search queries are not errors.
 	failure := NewSearchFailure("unknown", "unknown", 0)
@@ -114,7 +100,7 @@ func (b *Bridge) searchRounds(ctx context.Context, upstream io.ReadCloser, wire 
 		observed := newSearchTextObserver(state, offset, bufferText)
 		roundBody := current
 		stop := context.AfterFunc(ctx, func() { _ = roundBody.Close() })
-		response, err := readSearchRound(ctx, current, observed.observe)
+		response, err := readSearchRound(current, observed.observe)
 		stop()
 		_ = current.Close()
 		current = nil
@@ -151,9 +137,7 @@ func (b *Bridge) searchRounds(ctx context.Context, upstream io.ReadCloser, wire 
 		check.stagedReplays = nil
 		// Validate every tool before any search side effect. All IDs are request-wide.
 		if err = check.validateToolResponse(response); err != nil {
-			return &searchToolValidationError{error: err, response: object{
-				"id": state.id, "model": state.model, "status": "completed", "usage": state.usage,
-			}}
+			return searchFailureAt(err, "tool_validation", "invalid_tool_response")
 		}
 		for i, rawItem := range output {
 			item, _ := rawItem.(object)
@@ -329,7 +313,7 @@ func (b *searchRoundBody) Close() error {
 	return b.err
 }
 
-func readSearchRound(ctx context.Context, reader io.Reader, observe func(string, object, object) error) (object, error) {
+func readSearchRound(reader io.Reader, observe func(string, object) error) (object, error) {
 	var response, usage object
 	var terminalErr error
 	terminal := false
@@ -345,12 +329,13 @@ func readSearchRound(ctx context.Context, reader io.Reader, observe func(string,
 		if kind == "" {
 			kind = event
 		}
-		observeRateLimit(ctx, "search", kind, payload)
-		current, _ := payload["response"].(object)
-		var progress object
-		if sample := eventUsage(payload, current); len(sample) > 0 {
-			usage = maxReportedUsage(usage, sample)
-			progress = usage
+		if current, ok := payload["response"].(object); ok {
+			if value, ok := current["usage"].(object); ok {
+				usage = maxReportedUsage(usage, value)
+			}
+		}
+		if value, ok := payload["usage"].(object); ok {
+			usage = maxReportedUsage(usage, value)
 		}
 		switch kind {
 		case "response.completed", "response.failed", "response.cancelled", "response.incomplete", "error":
@@ -361,12 +346,12 @@ func readSearchRound(ctx context.Context, reader io.Reader, observe func(string,
 			}
 			return io.EOF
 		}
-		return observe(kind, payload, progress)
+		return observe(kind, payload)
 	})
 	if response == nil {
 		response = object{}
 	}
-	response["usage"] = usage
+	response["usage"] = maxReportedUsage(usage, objectValue(response["usage"]))
 	if err != nil && !errors.Is(err, io.EOF) {
 		return response, err
 	}
@@ -375,6 +360,8 @@ func readSearchRound(ctx context.Context, reader io.Reader, observe func(string,
 	}
 	return response, terminalErr
 }
+
+func objectValue(value any) object { result, _ := value.(object); return result }
 
 // Citations are created only for literal source URLs actually present in text.
 func annotateSearchCitations(output []any) {

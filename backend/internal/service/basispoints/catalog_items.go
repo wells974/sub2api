@@ -46,9 +46,7 @@ func flattenCatalogAt(value any, namespace, location string) ([]catalogDeclarati
 		if namespace != "" {
 			key = namespace + "." + name
 		}
-		if clientToolSearch(item) && namespace == "" {
-			key = "tool_search"
-		} else if isUnsupportedHostedTool(kind) {
+		if isUnsupportedHostedTool(kind) {
 			key = "hosted:" + kind
 		}
 		result = append(result, catalogDeclaration{item: item, namespace: namespace, key: key, path: itemPath})
@@ -56,46 +54,10 @@ func flattenCatalogAt(value any, namespace, location string) ([]catalogDeclarati
 	return result, nil
 }
 
-// Older clients can omit execution on the output. Infer it only from a
-// matching client search in this request or the same scoped replay cache.
-func (b *Bridge) pairedClientSearchOutputs(items []any) (map[int]object, error) {
-	calls := make(map[string]bool)
-	paired := make(map[int]object)
-	for i, raw := range items {
-		item, _ := raw.(object)
-		id := text(item["call_id"])
-		if id == "" {
-			continue
-		}
-		switch item["type"] {
-		case "function_call", "custom_tool_call", "tool_search_call":
-			calls[id] = item["type"] == "tool_search_call" && item["execution"] == "client"
-		case "tool_search_output":
-			if item["execution"] != nil && item["execution"] != "client" {
-				continue
-			}
-			if client, seen := calls[id]; seen {
-				if client {
-					paired[i] = nil
-				}
-				continue
-			}
-			if native, client := b.replay.getMatching(b.scope, id, ""); client {
-				paired[i] = native
-			} else if err := b.replay.Err(); err != nil {
-				return nil, err
-			} else if item["execution"] == "client" {
-				return nil, fmt.Errorf("basispoints original client search is unavailable (path=input[%d]); resend the matching complete tool search call with its result", i)
-			}
-		}
-	}
-	return paired, nil
-}
-
 // Current explicit declarations win; without them, newer replay declarations
 // replace inherited entries. Preserve first-seen order while choosing the last
 // replayed definition. Cache publication still follows the existing CAS boundary.
-func (b *Bridge) collectClientCatalog(source object, inherited bool, pairedSearch map[int]object) ([]any, error) {
+func (b *Bridge) collectClientCatalog(source object, inherited bool) ([]any, error) {
 	catalog, err := b.collectTools(source["tools"], "")
 	if err != nil {
 		return nil, err
@@ -112,17 +74,7 @@ func (b *Bridge) collectClientCatalog(source object, inherited bool, pairedSearc
 		if err != nil {
 			return nil, err
 		}
-		// The native client already revealed these definitions. Put the selected
-		// schema in the BPS prompt once, without requiring a second lookup.
-		_, paired := pairedSearch[index]
-		clientResult := item["type"] == "tool_search_output" && (item["execution"] == "client" || paired)
 		for _, declaration := range declarations {
-			if clientResult {
-				if b.clientSearchResults == nil {
-					b.clientSearchResults = make(map[string]bool)
-				}
-				b.clientSearchResults[declaration.key] = true
-			}
 			if _, exists := b.tools[declaration.key]; exists && !inherited {
 				continue
 			}

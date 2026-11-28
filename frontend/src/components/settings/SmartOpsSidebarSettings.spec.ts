@@ -25,9 +25,10 @@ describe('smart operations sidebar settings', () => {
       template: '<form><Panel v-model="hidden"/></form>',
     })
     const wrapper = mount(Harness, { global: setup().global })
-    expect(wrapper.findAll('[role="switch"]')).toHaveLength(11)
-    expect(wrapper.findAll('[role="switch"][aria-checked="true"]')).toHaveLength(6)
-    expect(wrapper.text()).toContain('已选择 6 / 11 个入口')
+    expect(wrapper.findAll('[role="switch"]')).toHaveLength(12)
+    expect(wrapper.findAll('[role="switch"][aria-checked="true"]')).toHaveLength(7)
+    expect(wrapper.text()).toContain('已选择 7 / 12 个入口')
+    expect(wrapper.get('#smart-ops-sidebar-notification-channels').attributes('aria-checked')).toBe('true')
     expect(wrapper.findAll('button').every(button => button.attributes('type') === 'button')).toBe(true)
     expect(wrapper.get('#smart-ops-sidebar-overview').attributes('aria-checked')).toBe('false')
     await wrapper.get('#smart-ops-sidebar-overview').trigger('click')
@@ -53,7 +54,7 @@ describe('smart operations sidebar settings', () => {
   it.each(['zh', 'en'])('renders translated labels and scope explanation in %s', locale => {
     const wrapper = mount(Panel, { props: { modelValue: [] }, global: setup(locale).global })
     expect(wrapper.text()).not.toMatch(/admin\.settings\.|\.title\b/)
-    expect(wrapper.text()).toContain('11')
+    expect(wrapper.text()).toContain('12')
   })
   it('shares its new notice ID and keeps dismissals across refresh without hiding future notices', async () => {
     const { pinia, global } = setup()

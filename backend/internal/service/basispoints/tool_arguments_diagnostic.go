@@ -18,7 +18,7 @@ type ToolArgumentsDiagnostic struct {
 }
 
 func newToolArgumentsError(info tool, err error) error {
-	d := &ToolArgumentsDiagnostic{Tool: safeSchemaName(catalogToolName(info)), Reason: "resource_limit", Path: "", Rule: "resource_limit"}
+	d := &ToolArgumentsDiagnostic{Tool: safeSchemaName(info.Name), Reason: "resource_limit", Path: "", Rule: "resource_limit"}
 	var validation *jsonschema.ValidationError
 	if errors.As(err, &validation) {
 		d.Reason, d.Rule = "schema_validation", "schema"
@@ -39,7 +39,7 @@ func newToolArgumentsError(info tool, err error) error {
 			validation = validation.Causes[0]
 		}
 	}
-	return toolArgumentsSchemaError{Diagnostic: d, diagnostic: repairArgumentObservation(d, validation)}
+	return toolArgumentsSchemaError{Diagnostic: d}
 }
 
 func safeToolArgumentRule(rule string) string {

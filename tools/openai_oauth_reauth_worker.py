@@ -478,13 +478,6 @@ class WorkerAPI:
         )
         return data if isinstance(data, dict) else None
 
-    def claim_initial_excel(self) -> dict[str, Any] | None:
-        if self.config.tosub2_root is None:
-            return None
-        data = self._post("/api/v1/internal/openai-reauth/initial-excel/claim",
-                          {"worker_id": self.config.worker_id})
-        return data if isinstance(data, dict) else None
-
     def claim_session_export(self) -> dict[str, Any] | None:
         data = self._post(
             "/api/v1/internal/openai-reauth/session-export/claim",
@@ -1290,131 +1283,6 @@ def _siwc_password_failure(output: str, exit_code: int) -> str:
     return f"SIWC authorization failed (stage={stage}, reason={reason}, exit={exit_code}); credentials retained{guidance}"
 
 
-EXCEL_FAILURE_CODES = {
-    'runtime_error', 'transport_error', 'security_check', 'additional_verification',
-    'email_verification', 'phone_verification', 'interaction_required', 'unexpected_login_step',
-    'password_rejected', 'totp_rejected', 'callback_state_mismatch', 'workspace_not_listed',
-    'client_id', 'session_selection', 'protocol_error', 'timeout', 'invalid_credentials', 'worker_failed',
-}
-EXCEL_FAILURE_STAGES = {
-    'starting', 'protocol_connecting', 'web_login', 'password_accepted', 'mfa_challenge',
-    'mfa_accepted', 'excel_authorize', 'excel_token_exchange', 'applying_credentials',
-}
-
-
-def parse_excel_failure(message):
-    """Validate the complete diagnostic before retaining any of its fields."""
-    match = re.fullmatch(r'Excel password/TOTP login failed \(stage=([a-z_]+), reason=([a-z_,]+), exit=(-?\d{1,3})\)',
-                         message if len(message) <= 256 else '')
-    if not match:
-        return None
-    stage, reasons, exit_code = match.groups()
-    reasons = set(reasons.split(','))
-    if stage not in EXCEL_FAILURE_STAGES or not reasons <= EXCEL_FAILURE_CODES or not -255 <= int(exit_code) <= 255:
-        return None
-    # Password/TOTP rejection can also invoke the no-interactive-input guard.
-    priority = ('password_rejected', 'totp_rejected', 'runtime_error', 'transport_error',
-                'security_check', 'email_verification', 'phone_verification', 'interaction_required',
-                'unexpected_login_step', 'additional_verification', 'callback_state_mismatch',
-                'workspace_not_listed', 'client_id', 'session_selection', 'protocol_error',
-                'timeout', 'invalid_credentials', 'worker_failed')
-    return stage, next(code for code in priority if code in reasons), int(exit_code)
-
-
-def initial_excel_failure(exc, stage):
-    """Return bounded identifiers only; never send exception text to the API."""
-    stage = stage if stage in EXCEL_FAILURE_STAGES else 'starting'
-    if isinstance(exc, OSError):
-        return 'runtime_error', stage
-    if not isinstance(exc, WorkerError):
-        return 'worker_failed', stage
-    message = str(exc)
-    parsed = parse_excel_failure(message)
-    if parsed:
-        stage, code, _ = parsed
-        return code, stage
-    if message == 'password/TOTP protocol timed out':
-        return 'timeout', stage
-    if message in {'unsupported_toSub2_runtime_layout', 'password/TOTP protocol could not start',
-                   'Node.js is required for password/TOTP re-login',
-                   'toSub2 protocol-login.mjs is unavailable', 'TOSUB2_ROOT is required for password/TOTP re-login'}:
-        return 'runtime_error', stage
-    if message in {'excel_client_mismatch', 'excel_id_token_client_mismatch', 'excel_email_mismatch',
-                   'excel_token_expired_or_missing_expiry', 'excel_workspace_mismatch',
-                   'excel_wrong_workspace_selected', 'excel_refresh_missing',
-                   'password/TOTP protocol returned incomplete OAuth credentials',
-                   'password/TOTP protocol did not produce valid OAuth credentials'}:
-        return 'invalid_credentials', 'excel_token_exchange'
-    return 'worker_failed', stage
-
-
-class InitialExcelAPI:
-    """Reuse the password runner without access to account mutation callbacks."""
-    def __init__(self, api):
-        self.api, self.config = api, api.config
-        self.stage = 'starting'
-
-    def _post(self, task_id, action, **payload):
-        return self.api._post(f"/api/v1/internal/openai-reauth/{task_id}/initial-excel/{action}",
-                              {"worker_id": self.config.worker_id, **payload})
-
-    def active(self, task_id):
-        result = self._post(task_id, "active")
-        return isinstance(result, dict) and result.get("active") is True
-
-    def progress(self, task_id, stage):
-        if stage in EXCEL_FAILURE_STAGES:
-            self.stage = stage
-        if not self.active(task_id):
-            raise WorkerError("initial Excel login canceled or expired")
-
-    def credentials(self, task_id, credentials, extra=None):
-        return self._post(task_id, "result", credentials=credentials)
-
-    def fail(self, task_id, error_code='worker_failed', error_stage='starting'):
-        return self._post(task_id, "fail",
-                          error_code=error_code if error_code in EXCEL_FAILURE_CODES else 'worker_failed',
-                          error_stage=error_stage if error_stage in EXCEL_FAILURE_STAGES else 'starting')
-
-
-def run_initial_excel_process(api, task_id, command, **options):
-    """Retire a canceled runner without escaping managed process-group teardown."""
-    if not api.active(task_id):
-        raise WorkerError("initial Excel login canceled or expired")
-    deadline = time.monotonic() + options.pop("timeout")
-    options.pop("check", None)
-    # Keep the inherited worker group: API shutdown kills Node/TLS descendants.
-    process = subprocess.Popen(command, **options)
-    completed = False
-    try:
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise subprocess.TimeoutExpired(command, 0)
-            try:
-                stdout, stderr = process.communicate(timeout=min(2, remaining))
-                completed = True
-                if not api.active(task_id):
-                    raise WorkerError("initial Excel login canceled or expired")
-                return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-            except subprocess.TimeoutExpired:
-                if not api.active(task_id):
-                    raise WorkerError("initial Excel login canceled or expired")
-    finally:
-        if not completed:
-            if process.poll() is None:
-                process.kill()
-            # Closing the runner also closes its private TLS transport pipes.
-            # Do not wait indefinitely for an inherited output descriptor.
-            try:
-                process.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                for pipe in (process.stdout, process.stderr):
-                    if pipe is not None:
-                        pipe.close()
-                process.wait(timeout=5)
-
-
 def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
     oauth_profile = str(claim.get("oauth_profile") or "codex")
     if oauth_profile not in {"codex", "excel", "siwc"}:
@@ -1434,8 +1302,7 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
     totp_secret = str(claim.get("totp_secret") or "").strip()
     proxy_url = str(claim.get("proxy_url") or "").strip()
     root = getattr(getattr(api, "config", None), "tosub2_root", None)
-    initial_excel = isinstance(api, InitialExcelAPI) and oauth_profile == "excel" and account_id == 0
-    if task_id <= 0 or (account_id <= 0 and not initial_excel) or not email or not password or (initial_excel and not totp_secret):
+    if task_id <= 0 or account_id <= 0 or not email or not password:
         raise WorkerError("claimed password task is missing required fields")
     if root is None:
         raise WorkerError("TOSUB2_ROOT is required for password/TOTP re-login")
@@ -1542,8 +1409,7 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
             child_env.pop("CHATGPT_TOTP_SECRET", None)
         protocol_started = time.monotonic()
         try:
-            run = (lambda command, **options: run_initial_excel_process(api, task_id, command, **options)) if initial_excel else subprocess.run
-            result = run(
+            result = subprocess.run(
                 command,
                 cwd=temp_dir,
                 env=child_env,
@@ -1588,23 +1454,9 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
                         stage = label
                 reasons = [label for marker, label in (("security-check", "security_check"), ("PROXY_RISK_CONTROL", "security_check"),
                            ("EXCEL_ADDITIONAL_VERIFICATION_REQUIRED", "additional_verification"),
-                           ("EXCEL_EMAIL_VERIFICATION_REQUIRED", "email_verification"),
-                           ("EXCEL_PHONE_VERIFICATION_REQUIRED", "phone_verification"),
-                           ("EXCEL_INTERACTION_REQUIRED", "interaction_required"),
-                           ("TOTP_FACTOR_NOT_FOUND", "interaction_required"),
-                           ("TOTP_FACTOR_BINDING_REQUIRED", "interaction_required"),
-                           ("TOTP_SECRET_REQUIRED", "interaction_required"),
-                           ("2FA is required, but the response does not contain a TOTP factor ID", "interaction_required"),
-                           ("EXCEL_UNEXPECTED_LOGIN_STEP", "unexpected_login_step"),
                            ("EXCEL_CALLBACK_STATE_MISMATCH", "callback_state_mismatch"),
                            ("EXCEL_EXPECTED_WORKSPACE_NOT_LISTED", "workspace_not_listed"),
                            ("Password was rejected", "password_rejected"), ("2FA key was rejected", "totp_rejected"),
-                           ("code generated from the configured 2FA key was rejected", "totp_rejected"),
-                           ("ERR_MODULE_NOT_FOUND", "runtime_error"), ("ReferenceError", "runtime_error"),
-                           ("SyntaxError", "runtime_error"), ("ENOENT", "runtime_error"),
-                           ("fetch failed", "transport_error"), ("ECONNREFUSED", "transport_error"),
-                           ("ENOTFOUND", "transport_error"), ("ETIMEDOUT", "transport_error"),
-                           ("Could not resolve", "transport_error"), ("Failed to connect", "transport_error"),
                            ("SESSION_SELECTION_INVALID", "session_selection"), ("CLIENT_ID", "client_id")) if marker in private_output]
                 reason = ",".join(sorted(set(reasons))) or "protocol_error"
                 raise WorkerError(f"Excel password/TOTP login failed (stage={stage}, reason={reason}, exit={result.returncode})")
@@ -1781,28 +1633,6 @@ def run_once(api: WorkerAPI, protocol: SimpleNamespace | None) -> bool:
     except WorkerError as exc:
         LOGGER.warning("claim failed: %s", safe_worker_failure(exc))
         return False
-    if not claim and callable(getattr(api, "claim_initial_excel", None)):
-        try:
-            initial = api.claim_initial_excel()
-        except WorkerError:
-            initial = None  # Older servers do not expose this optional queue.
-        if isinstance(initial, dict) and initial:
-            initial_api = InitialExcelAPI(api)
-            task_id = int(initial.get("task_id") or 0)
-            try:
-                if initial.get("oauth_profile") != "excel" or initial.get("account_id") != 0:
-                    raise WorkerError("invalid initial Excel task")
-                process_password_claim(initial_api, initial)
-            except Exception as exc:
-                # Initial credentials and raw protocol errors never enter logs.
-                code, stage = initial_excel_failure(exc, initial_api.stage)
-                LOGGER.warning("initial Excel task=%s failed (stage=%s, reason=%s)", task_id, stage, code)
-                if task_id > 0:
-                    try:
-                        initial_api.fail(task_id, code, stage)
-                    except WorkerError:
-                        pass  # Cancellation/expiry already retired the task.
-            return True
     if not claim:
         try:
             claim = api.claim_session_export()
@@ -1842,12 +1672,6 @@ def safe_worker_failure(exc: BaseException) -> str:
     if isinstance(exc, SessionStudioError):
         return exc.diagnostic()
     raw = str(exc).strip()
-    if isinstance(exc, WorkerError) and raw.startswith('Excel password/TOTP login failed'):
-        parsed = parse_excel_failure(raw)
-        if parsed:
-            stage, reason, exit_code = parsed
-            return f'Excel password/TOTP login failed (stage={stage}, reason={reason}, exit={exit_code})'
-        return 'worker_failed'
     if raw.startswith("session_studio_failed"):
         return sanitize_error(raw)  # Whole-protocol validator; never generic prose.
     if raw.startswith("local_protocol_failed"):

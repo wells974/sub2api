@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"net/http"
 	"strings"
@@ -122,7 +123,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		}
 		// Detailed usage needs current permissions. Resolve the authenticated
 		// identity before any policy check or context write uses the key.
-		if c.Request.Method == http.MethodGet && c.FullPath() == gatewayUsageRecordsPath {
+		if c.Request.Method == http.MethodGet && (c.FullPath() == gatewayUsageRecordsPath || isKeyGroupHealthRequest(c)) {
 			apiKey, err = revalidateUsageRecordsKey(c.Request.Context(), apiKeyService, apiKeyString, apiKey)
 			if err != nil {
 				abortAPIKeyLookupError(c, err, nil)
@@ -155,18 +156,20 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			return
 		}
 		ctx := context.WithValue(c.Request.Context(), ctxkey.UserID, apiKey.User.ID)
+		// 请求头覆写变量（{{user_id}} 等）的取值来源：只在此处由已认证的 Key 建立。
+		ctx = service.WithHeaderOverrideRequestScope(ctx, apiKey.User.ID, apiKey.ID, apiKey.GroupID)
 		c.Request = c.Request.WithContext(ctx)
 		billingInfoRequest := c.Request.URL.Path == "/v1/sub2api/billing"
 		pelicanReadRequest := (c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead) &&
 			isPublicPelicanShowcasePath(c.Request.URL.Path)
 		// Showcase reads are free but still require an unexpired site API key,
 		// including in simple mode. The existing user/group/IP checks above apply.
-		if pelicanReadRequest && (apiKey.Status == service.StatusAPIKeyExpired || apiKey.IsExpired()) {
+		if (pelicanReadRequest || isKeyGroupHealthRequest(c)) && (apiKey.Status == service.StatusAPIKeyExpired || apiKey.IsExpired()) {
 			AbortWithError(c, http.StatusForbidden, "API_KEY_EXPIRED", "API key 已过期")
 			return
 		}
 		_, modelListingRequest := GetModelListingGroups(c)
-		metadataReadRequest := billingInfoRequest || pelicanReadRequest || modelListingRequest
+		metadataReadRequest := isKeyGroupHealthRequest(c) || billingInfoRequest || pelicanReadRequest || modelListingRequest
 		// Discovery does not spend balance or quota, but expired keys must not
 		// regain access through the metadata path.
 		if modelListingRequest && (apiKey.Status == service.StatusAPIKeyExpired || apiKey.IsExpired()) {
@@ -317,6 +320,8 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 // Only initial authentication classifies unknown credentials for abuse tracking.
 func abortAPIKeyLookupError(c *gin.Context, err error, anonymousGuard *service.APIKeyService) {
 	switch {
+	case errors.Is(err, service.ErrAPIKeyPrimaryGroupRequired), errors.Is(err, service.ErrAPIKeyGroupPolicyUnavailable):
+		AbortWithError(c, infraerrors.Code(err), infraerrors.Reason(err), infraerrors.Message(err))
 	case errors.Is(err, service.ErrUserNotFound):
 		AbortWithError(c, http.StatusUnauthorized, "USER_NOT_FOUND", "User associated with API key not found")
 	case errors.Is(err, service.ErrAPIKeyNotFound):

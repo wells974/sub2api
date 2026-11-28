@@ -231,7 +231,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSImages(ctx context.Context, c *gin
 			errorType = "server_error"
 		}
 		upErr := &OpenAIImagesUpstreamError{StatusCode: status, ErrorType: errorType, Code: code, Message: message}
-		writeExcelBPSImagesError(c, upErr)
+		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
 		return nil, false, upErr
 	}
 	var body []byte
@@ -350,7 +350,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSImages(ctx context.Context, c *gin
 	}
 
 	SetActualOpenAIUpstreamEndpoint(c, endpoint)
-	usage, imageCount, imageOutputSizes, err := s.handleCodexDirectImagesNonStreamingResponse(presentExcelBPSImageResponse(c, resp), c, parsed)
+	usage, imageCount, imageOutputSizes, err := s.handleCodexDirectImagesNonStreamingResponse(resp, c, parsed)
 	if err != nil {
 		if _, _, ok := OpenAIUpstreamStreamReadErrorDetails(err); ok {
 			if lease != nil && ctx.Err() == nil {
@@ -367,7 +367,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSImages(ctx context.Context, c *gin
 		}
 		var upErr *OpenAIImagesUpstreamError
 		if errors.As(err, &upErr) {
-			writeExcelBPSImagesError(c, upErr)
+			writeOpenAIImagesUpstreamErrorResponse(c, upErr)
 		}
 		return nil, false, err
 	}

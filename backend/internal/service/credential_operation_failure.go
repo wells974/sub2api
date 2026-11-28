@@ -238,7 +238,7 @@ func credentialOperationFailure(code, stage string, at *time.Time) *CredentialOp
 	case "rate_limited", "timeout", "transport_error", "service_error":
 		action = "check_service_later"
 	}
-	if !validLocalProtocolStage(stage) && !validExcelLoginFailureStage(stage) && stage != "inspection" && stage != "refresh_token" && stage != "http_request" && stage != "event_stream" && stage != "terminal_result" && stage != "credentials_validation" && stage != "credentials_submit" {
+	if !validLocalProtocolStage(stage) && stage != "inspection" && stage != "refresh_token" && stage != "http_request" && stage != "event_stream" && stage != "terminal_result" && stage != "credentials_validation" && stage != "credentials_submit" {
 		stage = "unknown"
 	}
 	return &CredentialOperationFailure{Category: category, Code: code, Stage: stage, Action: action, OccurredAt: at}
@@ -291,12 +291,6 @@ func reauthOperationFailure(record *OpenAIOAuthReauthTaskRecord, diagnostic *Rea
 	stage, code := "unknown", credentialOperationText(record.Error)
 	if diagnostic != nil {
 		stage, code = diagnostic.Stage, credentialOperationCode(diagnostic.Reason)
-		switch diagnostic.Reason {
-		case "email_verification":
-			code = "mfa_required"
-		case "phone_verification":
-			code = "phone_verification_required"
-		}
 		if diagnostic.Reason == "http_rejected" {
 			switch {
 			case diagnostic.HTTPStatus == 429:

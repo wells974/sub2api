@@ -53,7 +53,6 @@ func excelBPSRepairWire(t *testing.T, id, summary, code string) string {
 }
 
 func TestExcelBPSToolCorrectionPreservesRouteAndUsage(t *testing.T) {
-	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	gin.SetMode(gin.TestMode)
 	for _, stream := range []bool{false, true} {
 		for _, corrected := range []bool{false, true} {
@@ -128,7 +127,6 @@ func TestExcelBPSToolCorrectionPreservesRouteAndUsage(t *testing.T) {
 }
 
 func TestExcelBPSUnknownTargetDoesNotRegenerateVisibleStream(t *testing.T) {
-	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	gin.SetMode(gin.TestMode)
 	for _, stream := range []bool{true, false} {
 		for _, kind := range []string{"response.output_text.delta", "response.reasoning_summary_text.delta"} {
@@ -176,7 +174,6 @@ func TestExcelBPSUnknownTargetDoesNotRegenerateVisibleStream(t *testing.T) {
 }
 
 func TestExcelBPSToolCorrectionStopsOnHTTPRejection(t *testing.T) {
-	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original wire-contract regression.
 	for _, status := range []int{403, 429, 500} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			first := &excelBPSRepairBody{Reader: strings.NewReader(excelBPSRepairWire(t, "http_rejection", "Run", "text(42);"))}

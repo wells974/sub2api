@@ -121,7 +121,6 @@ func TestSettingHandler_GetPublicSettings_ExposesWeChatOAuthModeCapabilities(t *
 }
 
 func TestSettingHandler_GetPublicSettings_ExposesProtocolFeatureSwitches(t *testing.T) {
-	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Preserve the original public wire contract.
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {

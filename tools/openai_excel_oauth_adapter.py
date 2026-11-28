@@ -5,7 +5,6 @@ closed rather than silently falling back to Codex or modifying a shared worker.
 """
 import base64
 import json
-import math
 import shutil
 import time
 from pathlib import Path
@@ -23,12 +22,6 @@ def replace_exact(source, old, new, count=1):
 def excel_source(source):
     source = replace_exact(source, 'import crypto from "node:crypto";',
                            'import crypto from "node:crypto";\nimport {loginExcelPassword} from "./openai_excel_password_flow.mjs";')
-    # Validate every actual request, including intermediate HTTP redirects.
-    # The BPS callback is intercepted by follow(); it is never fetched.
-    source = replace_exact(source, '    const targetUrl = new URL(url);', '''    const targetUrl = new URL(url);
-    if (targetUrl.origin !== "https://auth.openai.com" || targetUrl.username || targetUrl.password) {
-      throw new Error("EXCEL_UNEXPECTED_LOGIN_STEP");
-    }''')
     source = replace_exact(source, 'async function loginChatgptWeb(client, { chatgptBase, authBase, email, rl, password, totpSecret }) {', '''async function loginChatgptWeb(client, { chatgptBase, authBase, email, rl, password, totpSecret }) {
   return loginExcelPassword(client, {authBase,email,rl,password,totpSecret,clientId:DEFAULT_CODEX_CLIENT_ID,redirectUri:DEFAULT_CODEX_REDIRECT_URI},
     {isPasswordLoginPage,isAuthLoginPage,createSentinelHeaders,authJsonStep,getContinueUrl,verifyPassword,
@@ -36,21 +29,6 @@ def excel_source(source):
     source = replace_exact(source, 'async function runCodexOauth(client, options) {', '''async function runCodexOauth(client, options) {
   if (client.excelOAuth) return client.excelOAuth;
   throw new Error("EXCEL_PKCE_SESSION_MISSING");''')
-    # Accept both the pinned legacy runtime and its factor-binding patch. Keep
-    # factor selection intact, but generate the OTP after asynchronous headers.
-    factor_code = '    const code = generateTotp(totpSecret);\n    const sentinelHeaders = await createSentinelHeaders(client, {authBase, deviceId, flow: "password_verify"});'
-    if factor_code in source:
-        source = replace_exact(source, factor_code,
-            '    const sentinelHeaders = await createSentinelHeaders(client, {authBase, deviceId, flow: "password_verify"});\n    const code = generateTotp(totpSecret);')
-    else:
-        # Verify the legacy contract as well as the shared request anchor.
-        if source.count('  let generatedFromSecret = false;') != 1:
-            raise ValueError("unsupported_toSub2_runtime_layout")
-        source = replace_exact(source,
-            '      const { data } = await authJsonStep(client, authBase, "POST", "/api/accounts/mfa/verify", {',
-            '''      // Header preparation can cross a TOTP window. Generate immediately before sending.
-      if (generatedFromSecret) code = generateTotp(totpSecret);
-      const { data } = await authJsonStep(client, authBase, "POST", "/api/accounts/mfa/verify", {''')
     source = replace_exact(source, 'const DEFAULT_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";',
                            f'const DEFAULT_CODEX_CLIENT_ID = "{CLIENT_ID}";')
     source = replace_exact(source, 'const DEFAULT_CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback";',
@@ -87,7 +65,7 @@ def excel_source(source):
     source = replace_exact(source, old_identity, '''  const accessClaims = decodeJwtPayload(tokenSet.access_token);
   const accessAuth = accessClaims["https://api.openai.com/auth"] || {};
   const chatgptAccountId = accessAuth.chatgpt_account_id || authClaims.chatgpt_account_id || "";
-  const chatgptUserId = accessAuth.chatgpt_user_id || accessAuth.user_id || authClaims.chatgpt_user_id || authClaims.user_id || "";
+  const chatgptUserId = accessAuth.chatgpt_user_id || authClaims.chatgpt_user_id || "";
   if (!chatgptAccountId || !chatgptUserId) throw new Error("EXCEL_TOKEN_IDENTITY_MISSING");''')
     source = replace_exact(source, '      access_token: tokenSet.access_token,\n      chatgpt_account_id: chatgptAccountId,', '''      access_token: tokenSet.access_token,
       client_id: clientId,
@@ -95,11 +73,10 @@ def excel_source(source):
       chatgpt_user_id: chatgptUserId,
       chatgpt_account_user_id: accessAuth.chatgpt_account_user_id || authClaims.chatgpt_account_user_id || "",
       chatgpt_account_id: chatgptAccountId,''')
-    # A request for interactive input is not necessarily an extra verification.
-    # Known email/phone pages are classified by the Excel flow itself.
+    # Fail on any interactive additional verification; never silently hang waiting for email/phone OTP.
     start = 'async function ask(rl, prompt) {'
     if start in source:
-        source = replace_exact(source, start, start+'\n  throw new Error("EXCEL_INTERACTION_REQUIRED");')
+        source = replace_exact(source, start, start+'\n  throw new Error("EXCEL_ADDITIONAL_VERIFICATION_REQUIRED");')
     source = replace_exact(source, '  const organization = workspaces.find((item) => item?.kind === "organization" && item?.id);', '''  const expected = process.env.OPENAI_EXCEL_EXPECTED_WORKSPACE;
   if (expected) {
     const matched = workspaces.find((item) => item?.id === expected);
@@ -143,19 +120,15 @@ def validate_excel_credentials(credentials, email, expected_workspace=None):
     audience = identity.get('aud')
     if audience != CLIENT_ID and not (isinstance(audience, list) and CLIENT_ID in audience):
         raise ValueError('excel_id_token_client_mismatch')
-    identity_email = identity.get('email')
-    if not isinstance(identity_email, str) or identity_email.lower() != email.lower():
+    if identity.get('email', '').lower() != email.lower():
         raise ValueError('excel_email_mismatch')
-    expiry = access.get('exp')
-    if isinstance(expiry, bool) or not isinstance(expiry, (float,int)) or not math.isfinite(expiry) or expiry <= time.time():
+    if not isinstance(access.get('exp'), (float,int)) or access['exp'] <= time.time():
         raise ValueError('excel_token_expired_or_missing_expiry')
     auth = access.get('https://api.openai.com/auth') or {}
-    if not isinstance(auth, dict):
-        raise ValueError('excel_workspace_mismatch')
     workspace = auth.get('chatgpt_account_id')
-    if not isinstance(workspace, str) or not workspace or workspace != credentials.get('chatgpt_account_id'):
+    if not workspace or workspace != credentials.get('chatgpt_account_id'):
         raise ValueError('excel_workspace_mismatch')
     if expected_workspace and expected_workspace != workspace:
         raise ValueError('excel_wrong_workspace_selected')
-    if not isinstance(credentials.get('refresh_token'), str) or not credentials['refresh_token'].strip():
+    if not credentials.get('refresh_token'):
         raise ValueError('excel_refresh_missing')

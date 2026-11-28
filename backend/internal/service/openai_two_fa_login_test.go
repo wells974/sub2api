@@ -46,7 +46,7 @@ func newTwoFATestService(t *testing.T, server *httptest.Server) *OpenAIReloginSe
 	cfg.ReloginHeaders["X-Test-Client"] = "{{uuid}}"
 	raw, err := json.Marshal(cfg)
 	require.NoError(t, err)
-	svc := NewOpenAIReloginService(&twoFALoginSettings{raw: string(raw)}, nil)
+	svc := NewOpenAIReloginService(&twoFALoginSettings{raw: string(raw)})
 	svc.httpClient = server.Client()
 	t.Cleanup(svc.clearTwoFALogins)
 	return svc

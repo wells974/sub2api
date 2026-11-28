@@ -721,6 +721,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		requestedModel = l.Model
 	}
 	return UsageLog{
+		RequestBodyBytes:          l.RequestBodyBytes,
 		ID:                        l.ID,
 		UserID:                    l.UserID,
 		APIKeyID:                  l.APIKeyID,
@@ -757,7 +758,6 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		FirstTokenMs:              l.FirstTokenMs,
 		QueueWaitMs:               l.QueueWaitMs,
 		QueueTiming:               l.QueueTiming,
-		ContentTiming:             l.ContentTiming,
 		CustomerCostDetails:       l.CustomerCostDetails,
 		ImageCount:                l.ImageCount,
 		ImageSize:                 l.ImageSize,

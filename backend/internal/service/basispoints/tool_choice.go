@@ -37,9 +37,6 @@ func parseToolChoice(value any) (string, *namedToolChoice, error) {
 		return "", nil, toolChoiceRequestError{"invalid_shape"}
 	}
 	kind := text(choice["type"])
-	if kind == "tool_search" && len(choice) == 1 {
-		return "required", &namedToolChoice{kind: kind, name: kind}, nil
-	}
 	if kind != "function" && kind != "custom" {
 		return "", nil, toolChoiceRequestError{"unsupported_type"}
 	}
@@ -69,14 +66,6 @@ func (b *Bridge) resolveToolChoice(choice *namedToolChoice) error {
 	if choice == nil {
 		return nil
 	}
-	if choice.kind == "tool_search" {
-		selected := b.tools["tool_search"]
-		if !clientToolSearch(selected.Catalog) {
-			return toolChoiceRequestError{"undeclared_target"}
-		}
-		b.selectedTool = &selected
-		return nil
-	}
 	for key, info := range b.tools {
 		if choice.name != key && choice.name != info.Name {
 			continue
@@ -93,7 +82,7 @@ func (b *Bridge) resolveToolChoice(choice *namedToolChoice) error {
 	if b.selectedTool == nil {
 		return toolChoiceRequestError{"undeclared_target"}
 	}
-	if b.selectedTool.Kind != choice.kind || clientToolSearch(b.selectedTool.Catalog) {
+	if b.selectedTool.Kind != choice.kind {
 		return toolChoiceRequestError{"type_mismatch"}
 	}
 	return nil

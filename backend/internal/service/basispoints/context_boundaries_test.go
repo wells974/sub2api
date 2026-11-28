@@ -9,7 +9,7 @@ import (
 
 func TestCurrentEncryptedInputCannotBeOmitted(t *testing.T) {
 	for _, kind := range []string{"message", "agent_message", "function_call_output", "custom_tool_call_output"} {
-		for _, tail := range []string{"", "reasoning", "additional_tools", "tool_search_output", "compaction_trigger", "configuration_update"} {
+		for _, tail := range []string{"", "reasoning", "additional_tools", "tool_search_output", "compaction_trigger"} {
 			t.Run(kind+"/"+tail, func(t *testing.T) {
 				field := "content"
 				if kind == "function_call_output" || kind == "custom_tool_call_output" {

@@ -33,7 +33,7 @@ func (r *reloginSettingsFixture) Set(_ context.Context, key, value string) error
 func TestReloginSettingsExtractOnlyProviderConfigAndPreferNewModule(t *testing.T) {
 	legacy := `{"enabled":true,"relogin_endpoint":"https://legacy.example/relogin","relogin_headers":{"X-Provider":"fixture"},"relogin_accounts":[{"email":"fixture@example.test","password":"legacy-password","mfa_secret":"legacy-mfa"}]}`
 	repo := &reloginSettingsFixture{values: map[string]string{legacyTokenGuardSettingsKey: legacy}}
-	svc := NewOpenAIReloginService(repo, nil)
+	svc := NewOpenAIReloginService(repo)
 	cfg, err := svc.GetConfig(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "https://legacy.example/relogin", cfg.ReloginEndpoint)
@@ -61,7 +61,7 @@ func TestReloginSettingsExtractOnlyProviderConfigAndPreferNewModule(t *testing.T
 
 func TestReloginSettingsRejectInvalidProviderBeforeWriting(t *testing.T) {
 	repo := &reloginSettingsFixture{values: map[string]string{}}
-	svc := NewOpenAIReloginService(repo, nil)
+	svc := NewOpenAIReloginService(repo)
 	for _, cfg := range []OpenAIReloginConfig{
 		{ReloginEndpoint: "http://login.example"},
 		{ReloginEndpoint: "https://user:secret@login.example"},

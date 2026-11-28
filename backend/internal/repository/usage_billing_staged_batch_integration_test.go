@@ -80,61 +80,6 @@ func TestStagedBillingBatchAggregatesWalletAndKeyAndReplay(t *testing.T) {
 	require.Equal(t, 2, writes, "replay cannot debit either hot row")
 }
 
-func TestStagedBillingBatchReconcilesCacheUsageWithReplayedReceipt(t *testing.T) {
-	ctx := t.Context()
-	repo, baseCommand, baseUsage, _ := durableBillingFixture(t)
-	// The same 160 input tokens and 14 output tokens from the BPS correction
-	// flow are billed under two policies: separate cache writes or writes as input.
-	requests := []struct {
-		id                 string
-		input, short, long int
-		quote, debit       float64
-	}{
-		{"separate-writes", 122, 23, 7, 0.001391775, 0.00139178},
-		{"writes-as-input", 152, 0, 0, 0.00130240, 0.00130240},
-	}
-	var keys []service.UsageBillingEventKey
-	for _, request := range requests {
-		cmd, usage := baseCommand, baseUsage
-		cmd.RequestID, usage.RequestID = request.id, request.id
-		cmd.InputTokens, cmd.OutputTokens = request.input, 14
-		cmd.CacheReadTokens, cmd.CacheCreationTokens = 8, request.short+request.long
-		cmd.QuotedActualCost = &request.quote
-		cmd.BalanceCost, cmd.APIKeyQuotaCost = request.debit, request.debit
-		usage.InputTokens, usage.OutputTokens = cmd.InputTokens, cmd.OutputTokens
-		usage.CacheReadTokens, usage.CacheCreationTokens = cmd.CacheReadTokens, cmd.CacheCreationTokens
-		usage.CacheCreation30mTokens, usage.CacheCreation12hTokens = request.short, request.long
-		usage.ActualCost = request.debit
-		require.NoError(t, repo.StageUsageBilling(ctx, &cmd, &usage))
-		keys = append(keys, service.UsageBillingEventKey{RequestID: request.id, APIKeyID: cmd.APIKeyID})
-	}
-	first, err := repo.ApplyStagedUsageBilling(ctx, keys[0])
-	require.NoError(t, err)
-	require.True(t, first.Result.Applied)
-	batch, err := repo.applyStagedUsageBillingBatch(ctx, strconv.FormatInt(baseCommand.UserID, 10), keys)
-	require.NoError(t, err)
-	require.Len(t, batch, 2)
-	for i, request := range requests {
-		require.True(t, batch[i].Settled)
-		require.Equal(t, i == 1, batch[i].Result.Applied)
-		var count int
-		require.NoError(t, repo.db.QueryRowContext(ctx, `SELECT count(*) FROM usage_logs l
-			JOIN usage_billing_quotes q USING (request_id, api_key_id)
-			WHERE l.request_id=$1 AND l.api_key_id=$2 AND l.input_tokens=$3 AND l.output_tokens=14
-			AND l.cache_read_tokens=8 AND l.cache_creation_tokens=$4::int+$5::int
-			AND l.cache_creation_30m_tokens=$4 AND l.cache_creation_12h_tokens=$5
-			AND q.quoted_actual_cost=$6 AND q.canonical_actual_cost=$7 AND l.actual_cost=$7`,
-			request.id, baseCommand.APIKeyID, request.input, request.short, request.long,
-			request.quote, request.debit).Scan(&count))
-		require.Equal(t, 1, count, request.id)
-	}
-	var debit, quota string
-	require.NoError(t, repo.db.QueryRowContext(ctx, `SELECT (100-u.balance)::text, k.quota_used::text
-		FROM users u JOIN api_keys k ON k.user_id=u.id WHERE k.id=$1`, baseCommand.APIKeyID).Scan(&debit, &quota))
-	require.Equal(t, "0.00269418", debit)
-	require.Equal(t, debit, quota)
-}
-
 func TestStagedBillingBatchFailureRollsBackAllEffects(t *testing.T) {
 	ctx := context.Background()
 	repo, cmd, usage, _ := durableBillingFixture(t)

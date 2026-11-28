@@ -1042,11 +1042,12 @@ func ProvideAPIKeyServiceWithGroupProtection(
 	userSubRepo UserSubscriptionRepository, userGroupRateRepo UserGroupRateRepository,
 	cache APIKeyCache, cfg *config.Config, billingCacheService *BillingCacheService,
 	concurrencyService *ConcurrencyService, authority RegionalAuthAuthority,
-	autoCredit AutoCreditRepository, protection *GroupAntiDistillationService,
+	autoCredit AutoCreditRepository, protection *GroupAntiDistillationService, settings SettingRepository,
 ) (*APIKeyService, error) {
 	svc, err := ProvideAPIKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, userGroupRateRepo, cache, cfg, billingCacheService, concurrencyService, authority, autoCredit)
 	if err == nil {
 		svc.groupAntiDistillation = protection
+		svc.SetGroupPolicy(NewSettingService(settings, nil))
 	}
 	return svc, err
 }
@@ -1212,9 +1213,18 @@ var ProviderSet = wire.NewSet(
 // ProvideUsageBillingRepository 以按用户合并结算的通道作为各服务使用的计费仓储。
 func ProvideUsageBillingRepository(lanes *UsageBillingLaneCombiner) UsageBillingRepository {
 	if durable, ok := lanes.repo.(DurableUsageBillingRepository); ok {
-		return &durableUsageBillingLanes{UsageBillingLaneCombiner: lanes, DurableUsageBillingRepository: durable}
+		wrapped := &durableUsageBillingLanes{UsageBillingLaneCombiner: lanes, DurableUsageBillingRepository: durable}
+		if settlement, ok := lanes.repo.(UsageSettlementRepository); ok {
+			return &upstreamUsageBillingLanes{wrapped, settlement}
+		}
+		return wrapped
 	}
 	return lanes
+}
+
+type upstreamUsageBillingLanes struct {
+	*durableUsageBillingLanes
+	UsageSettlementRepository
 }
 
 // Staged delivery keeps its transactional journal and cache acknowledgement.

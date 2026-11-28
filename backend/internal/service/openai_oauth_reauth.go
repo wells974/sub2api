@@ -188,9 +188,6 @@ type OpenAIOAuthReauthAccountReader interface {
 }
 
 type OpenAIOAuthReauthService struct {
-	excelInitialMu          sync.Mutex
-	excelInitialJobs        map[int64]*excelInitialLogin
-	excelInitialWorkerSeen  atomic.Int64
 	settings                AccountTokenGuardV2Settings
 	worker                  *reauthruntime.Manager
 	workerToken             string
@@ -1315,10 +1312,7 @@ func safeReauthTask(record *OpenAIOAuthReauthTaskRecord) *OpenAIOAuthReauthTask 
 	if record == nil {
 		return nil
 	}
-	_, diagnostic, _ := excelProtocolError(record.Error)
-	if diagnostic == nil {
-		_, diagnostic, _ = localProtocolError(record.Error)
-	}
+	_, diagnostic, _ := localProtocolError(record.Error)
 	if diagnostic == nil {
 		_, diagnostic, _ = sessionStudioError(record.Error)
 	}
@@ -1335,9 +1329,6 @@ func safeReauthTask(record *OpenAIOAuthReauthTaskRecord) *OpenAIOAuthReauthTask 
 }
 
 func sanitizeReauthError(raw string) string {
-	if safe, _, handled := excelProtocolError(raw); handled {
-		return safe
-	}
 	if safe, _, handled := parseReauthIdentityError(raw); handled {
 		return safe
 	}

@@ -298,7 +298,6 @@ func pr885RunConfigSwitchRefresh(t *testing.T, images bool, singleProxy int64, c
 }
 
 func TestExcelBPSRequestProxyConfigSwitchForward(t *testing.T) {
-	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Verify protocol details; neutral is tested separately.
 	for _, tc := range []struct {
 		name  string
 		proxy int64

@@ -97,13 +97,3 @@ func TestIssue605ContentAfterTransportEOFKeepsParserObservation(t *testing.T) {
 	s.Attempts[0].Events["first_reasoning"] = 400
 	require.Nil(t, DeriveContentObservation(s).ReasoningFirstMS, "request completion still bounds parser events")
 }
-
-func TestUsageRequestBodySizeRequiresCompleteRead(t *testing.T) {
-	require.Nil(t, DeriveContentObservation(Snapshot{BodyBytes: 12}).RequestBodyBytes)
-	require.Nil(t, DeriveContentObservation(Snapshot{BodyBytes: -1, BodyComplete: true}).RequestBodyBytes)
-	for _, size := range []int64{0, 87617997} {
-		got := DeriveContentObservation(Snapshot{BodyBytes: size, BodyComplete: true, Truncated: true})
-		require.NotNil(t, got.RequestBodyBytes)
-		require.Equal(t, size, *got.RequestBodyBytes)
-	}
-}

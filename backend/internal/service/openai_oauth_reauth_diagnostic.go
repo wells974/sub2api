@@ -2,7 +2,6 @@ package service
 
 import (
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -112,27 +111,4 @@ func validLocalProtocolReason(reason string) bool {
 		return true
 	}
 	return false
-}
-
-var excelProtocolDiagnosticPattern = regexp.MustCompile(`^Excel password/TOTP login failed \(stage=([a-z_]+), reason=([a-z_]+), exit=(-?[0-9]{1,3})\)$`)
-
-func excelProtocolError(raw string) (string, *ReauthDiagnostic, bool) {
-	msg := strings.TrimPrefix(strings.TrimSpace(raw), "WorkerError: ")
-	if !strings.HasPrefix(msg, "Excel password/TOTP login failed") {
-		return "", nil, false
-	}
-	invalid := "Excel login failed; invalid diagnostic omitted"
-	if len(msg) > 256 {
-		return invalid, nil, true
-	}
-	match := excelProtocolDiagnosticPattern.FindStringSubmatch(msg)
-	if match == nil || !validExcelLoginFailureStage(match[1]) || !validExcelLoginFailureCode(match[2]) {
-		return invalid, nil, true
-	}
-	exitCode, err := strconv.Atoi(match[3])
-	if err != nil || exitCode < -255 || exitCode > 255 {
-		return invalid, nil, true
-	}
-	diagnostic := &ReauthDiagnostic{Engine: OpenAIOAuthReauthEngineLocal, Stage: match[1], Reason: match[2], ExitCode: &exitCode}
-	return fmt.Sprintf("Excel password/TOTP login failed (stage=%s, reason=%s, exit=%d)", match[1], match[2], exitCode), diagnostic, true
 }

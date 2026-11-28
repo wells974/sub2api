@@ -105,6 +105,12 @@ func TestGroupFallbackMetricsRespectRequestGroup(t *testing.T) {
 	_, err = integrationDB.Exec(`INSERT INTO ops_error_logs(api_key_id,group_id,request_id,account_id,model,error_phase,error_type,error_owner,severity,status_code,platform,created_at)
        VALUES($1,$2,'group-fallback-failure',$3,'fixture','upstream','upstream_error','provider','error',503,'openai',$4)`, key.ID, second.ID, account.ID, at)
 	require.NoError(t, err)
+	// A billed partial response to an overlong prompt is excluded from
+	// this group's SLA even though the usage row still exists.
+	_, err = integrationDB.Exec(`INSERT INTO usage_logs(user_id,api_key_id,account_id,group_id,request_id,model,created_at,input_tokens,sla_excluded)
+       VALUES($1,$2,$3,$4,'group-fallback-overlong','fixture',$5,17,true)`, user.ID, key.ID, account.ID, second.ID, at)
+	require.NoError(t, err)
+
 	ops := NewOpsRepository(integrationDB)
 	for _, tc := range []struct {
 		group int64

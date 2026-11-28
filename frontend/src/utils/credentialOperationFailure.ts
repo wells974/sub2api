@@ -12,8 +12,7 @@ const actions: Record<string, string> = {
 export const operationStages = new Set(['starting', 'web_login', 'email_verification', 'password_accepted', 'mfa_challenge', 'mfa_accepted',
   'web_redirect', 'oauth_authorize', 'session_select', 'workspace_select', 'callback_validation',
   'token_exchange', 'oauth_output', 'completed', 'inspection', 'refresh_token', 'http_request',
-  'event_stream', 'terminal_result', 'credentials_validation', 'credentials_submit', 'unknown',
-  'protocol_connecting', 'excel_authorize', 'excel_token_exchange', 'applying_credentials'])
+  'event_stream', 'terminal_result', 'credentials_validation', 'credentials_submit', 'unknown'])
 
 // Defence for old API/worker records: never render arbitrary error strings.
 export function safeOperationFailure(value?: Partial<CredentialOperationFailure>): CredentialOperationFailure {
@@ -37,8 +36,7 @@ export function probeOperationFailure(item: TokenGuardV2Account): CredentialOper
   return safeOperationFailure({ stage: 'inspection', occurred_at: item.last_probe_at })
 }
 
-const legacyReasons = new Set(['email_verification', 'phone_verification', 'unexpected_login_step',
-  'additional_verification', 'workspace_not_listed', 'client_id', 'session_selection', 'invalid_credentials', 'worker_failed', 'protocol_error', 'password_rejected', 'totp_rejected', 'interaction_required', 'security_check',
+const legacyReasons = new Set(['protocol_error', 'password_rejected', 'totp_rejected', 'interaction_required', 'security_check',
   'candidate_missing', 'stored_identity_missing', 'id_token_invalid', 'access_token_invalid',
   'token_account_conflict', 'token_user_conflict', 'token_email_conflict', 'account_id_missing', 'account_id_mismatch',
   'user_id_missing', 'user_id_mismatch', 'email_missing', 'email_mismatch',

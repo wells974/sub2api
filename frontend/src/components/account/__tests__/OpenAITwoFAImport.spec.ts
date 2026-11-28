@@ -7,13 +7,12 @@ import { getCredentialEncryption, initializeCredentialEncryption } from '@/api/a
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import OpenAITwoFAImport from '../OpenAITwoFAImport.vue'
-import { deleteTwoFALogin, getTwoFALogin, startTwoFALogin, startExcelTwoFALogin, getExcelTwoFALogin, deleteExcelTwoFALogin } from '@/api/admin/openaiRelogin'
+import { deleteTwoFALogin, getTwoFALogin, startTwoFALogin } from '@/api/admin/openaiRelogin'
 
 vi.mock('vue-i18n', async importOriginal => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/api/admin/openaiRelogin', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/admin/openaiRelogin')>(),
   startTwoFALogin: vi.fn(), getTwoFALogin: vi.fn(), deleteTwoFALogin: vi.fn(),
-  startExcelTwoFALogin: vi.fn(), getExcelTwoFALogin: vi.fn(), deleteExcelTwoFALogin: vi.fn(),
 }))
 enableAutoUnmount(afterEach)
 beforeEach(() => {
@@ -113,104 +112,4 @@ it('blocks 2FA login and account creation until encryption initialization succee
   await wrapper.get('[data-testid="two-fa-start"]').trigger('click')
   await flushPromises()
   expect(importCredential).toHaveBeenCalledTimes(1)
-})
-
-
-describe('BPS initial 2FA import', () => {
-  it('uses the Excel queue and selected proxy, then retries import without repeating authorization', async () => {
-    const credential = { access_token: 'excel-at', client_id: 'app_fnr0pYvVwwFDocDumLG3H2Bp' }
-    vi.mocked(startExcelTwoFALogin).mockResolvedValue({ id: 'excel-job', status: 'running' })
-    vi.mocked(getExcelTwoFALogin).mockResolvedValue({ id: 'excel-job', status: 'succeeded', credential })
-    vi.mocked(deleteExcelTwoFALogin).mockResolvedValue()
-    const importCredential = vi.fn().mockRejectedValueOnce(new Error('PRIVATE_ERROR')).mockResolvedValueOnce('created')
-    const wrapper = mount(OpenAITwoFAImport, { props: { importCredential, excelOauth: true, proxyId: 12 } })
-    await start(wrapper, 'bps@example.com----password----totp')
-    expect(startExcelTwoFALogin).toHaveBeenCalledWith({ email: 'bps@example.com', password: 'password', mfa_secret: 'totp' }, 12)
-    expect(deleteExcelTwoFALogin).toHaveBeenCalledWith('excel-job')
-    expect(startTwoFALogin).not.toHaveBeenCalled()
-    expect(wrapper.text()).not.toContain('PRIVATE_ERROR')
-    await wrapper.get('[data-testid="two-fa-start"]').trigger('click')
-    await flushPromises()
-    expect(startExcelTwoFALogin).toHaveBeenCalledTimes(1)
-    expect(importCredential).toHaveBeenCalledTimes(2)
-    expect(wrapper.text()).toContain('openaiRelogin.twoFA.states.created')
-  })
-
-  it('retires an accepted Excel job when stop races with its POST response', async () => {
-    let accept!: (job: { id: string; status: 'running' }) => void
-    vi.mocked(startExcelTwoFALogin).mockImplementation(() => new Promise(resolve => { accept = resolve }))
-    vi.mocked(deleteExcelTwoFALogin).mockResolvedValue()
-    const importCredential = vi.fn()
-    const wrapper = mount(OpenAITwoFAImport, { props: { importCredential, excelOauth: true } })
-    await start(wrapper, 'bps@example.com----password----totp')
-    await wrapper.get('[data-testid="two-fa-stop"]').trigger('click')
-    // A parent reset must not redirect cleanup into the Codex job namespace.
-    await wrapper.setProps({ excelOauth: false })
-    accept({ id: 'late-excel-job', status: 'running' })
-    await flushPromises()
-    expect(deleteExcelTwoFALogin).toHaveBeenCalledWith('late-excel-job')
-    expect(importCredential).not.toHaveBeenCalled()
-    expect(getExcelTwoFALogin).not.toHaveBeenCalled()
-  })
-})
-
-it.each([
-  ['EXCEL_LOGIN_WORKER_PREPARING', undefined, 'openaiRelogin.twoFA.failures.workerPreparing'],
-  ['EXCEL_LOGIN_WORKER_UNAVAILABLE', undefined, 'openaiRelogin.twoFA.failures.excelWorkerUnavailable'],
-  ['OPENAI_REAUTH_WORKER_UNAVAILABLE', 'release_required', 'tokenGuardV2.runtimeReasons.release_required'],
-  ['OPENAI_REAUTH_WORKER_UNAVAILABLE', 'runtime_install_failed', 'tokenGuardV2.runtimeReasons.runtime_install_failed'],
-  ['OPENAI_REAUTH_WORKER_UNAVAILABLE', 'runtime_source_invalid', 'tokenGuardV2.runtimeReasons.runtime_source_invalid'],
-  ['OPENAI_REAUTH_WORKER_UNAVAILABLE', 'PRIVATE_REASON', 'openaiRelogin.twoFA.failures.workerUnavailable'],
-  ['EXCEL_LOGIN_PROXY_UNAVAILABLE', undefined, 'openaiRelogin.twoFA.failures.proxyUnavailable'],
-  ['PRIVATE_REASON', undefined, 'openaiRelogin.twoFA.states.failed'],
-  ['__proto__', undefined, 'openaiRelogin.twoFA.states.failed'],
-])('shows a safe actionable failure for %s / %s and clears it after retry', async (reason, workerReason, key) => {
-  vi.mocked(startExcelTwoFALogin).mockRejectedValueOnce({
-    status: 503, reason, message: 'PRIVATE_PASSWORD PRIVATE_TOTP PRIVATE_TOKEN',
-    metadata: { worker_reason: workerReason },
-  }).mockResolvedValue({ id: 'retry-job', status: 'running' })
-  vi.mocked(getExcelTwoFALogin).mockResolvedValue({ id: 'retry-job', status: 'succeeded', credential: { access_token: 'mock-access' } })
-  vi.mocked(deleteExcelTwoFALogin).mockResolvedValue()
-  const importCredential = vi.fn().mockResolvedValue('created')
-  const wrapper = mount(OpenAITwoFAImport, { props: { importCredential, excelOauth: true } })
-  await start(wrapper, 'a@example.com----password----totp')
-  expect(wrapper.text()).toContain(key)
-  expect(wrapper.text()).not.toContain('PRIVATE_')
-  expect(importCredential).not.toHaveBeenCalled()
-  expect(getExcelTwoFALogin).not.toHaveBeenCalled()
-  await wrapper.get('[data-testid="two-fa-start"]').trigger('click')
-  await flushPromises()
-  expect(wrapper.text()).not.toContain(key)
-  expect(wrapper.text()).toContain('openaiRelogin.twoFA.states.created')
-  expect(importCredential).toHaveBeenCalledTimes(1)
-})
-
-it.each([
-  ['transport_error', 'protocol_connecting', 'openaiRelogin.twoFA.excelFailures.transport_error'],
-  ['password_rejected', 'web_login', 'openaiRelogin.twoFA.excelFailures.password_rejected'],
-  ['totp_rejected', 'mfa_challenge', 'openaiRelogin.twoFA.excelFailures.totp_rejected'],
-  ['runtime_error', 'starting', 'openaiRelogin.twoFA.excelFailures.runtime_error'],
-  ['email_verification', 'web_login', 'openaiRelogin.twoFA.excelFailures.email_verification'],
-  ['phone_verification', 'web_login', 'openaiRelogin.twoFA.excelFailures.phone_verification'],
-  ['interaction_required', 'web_login', 'openaiRelogin.twoFA.excelFailures.interaction_required'],
-  ['unexpected_login_step', 'web_login', 'openaiRelogin.twoFA.excelFailures.unexpected_login_step'],
-  ['PRIVATE_TOKEN', 'PRIVATE_PASSWORD', 'openaiRelogin.twoFA.states.failed'],
-  [undefined, undefined, 'openaiRelogin.twoFA.states.failed'],
-])('shows failed BPS job diagnostics safely (%s)', async (errorCode, errorStage, key) => {
-  vi.mocked(startExcelTwoFALogin).mockResolvedValue({ id: 'failed-job', status: 'running' })
-  vi.mocked(getExcelTwoFALogin).mockResolvedValue({ id: 'failed-job', status: 'failed', error_code: errorCode, error_stage: errorStage })
-  vi.mocked(deleteExcelTwoFALogin).mockResolvedValue()
-  const importCredential = vi.fn().mockResolvedValue('created')
-  const wrapper = mount(OpenAITwoFAImport, { props: { importCredential, excelOauth: true } })
-  await start(wrapper, 'a@example.com----password----totp')
-  expect(wrapper.text()).toContain(key)
-  expect(wrapper.text()).not.toContain('PRIVATE_')
-  expect(importCredential).not.toHaveBeenCalled()
-  expect(deleteExcelTwoFALogin).toHaveBeenCalledWith('failed-job')
-  vi.mocked(getExcelTwoFALogin).mockResolvedValue({ id: 'failed-job', status: 'succeeded', credential: { access_token: 'mock' } })
-  await wrapper.get('[data-testid="two-fa-start"]').trigger('click')
-  await flushPromises()
-  expect(wrapper.text()).not.toContain(key)
-  expect(wrapper.text()).not.toContain('openaiRelogin.twoFA.failureStage')
-  expect(wrapper.text()).toContain('openaiRelogin.twoFA.states.created')
 })

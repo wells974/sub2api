@@ -80,7 +80,7 @@ func TestNativePlanAdaptsOnlyDeclaredFunctionAndPreservesOriginal(t *testing.T) 
 					t.Fatal("complete native plan was not cached intact")
 				}
 				output := object{"type": "function_call_output", "call_id": "call_plan_native", "output": "client explicitly rejected the plan"}
-				history, err := bridge.translateHistory([]any{translated, output}, nil)
+				history, err := bridge.translateHistory([]any{translated, output})
 				if err != nil || !reflect.DeepEqual(history[0], native) || mustTestValue[object](t, history[1])["output"] != output["output"] {
 					t.Fatalf("replay must retain the native item and the client's real result: %v", err)
 				}

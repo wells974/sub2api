@@ -5,13 +5,14 @@ import { DEFAULT_SMART_OPS_HIDDEN_MENU_ITEMS, SMART_OPS_MENU_ITEMS } from '@/con
 const smartOps = { path: '/admin/smart-ops', children: [{ path: '/admin/channel-config' }, { path: '/admin/group-cache-tests' }, { path: '/admin/qqbot/overview' }] }
 const settings = { path: '/admin/settings' }
 describe('smart operations sidebar visibility', () => {
-  it('shows exactly the six default entries when preferences are absent', () => {
+  it('shows the default entries in navigation order when preferences are absent', () => {
     const allEntries = { path: '/admin/smart-ops', children: SMART_OPS_MENU_ITEMS.map(item => ({ ...item })) }
     const visible = filterSmartOpsSidebar([allEntries], DEFAULT_SMART_OPS_HIDDEN_MENU_ITEMS)
     expect(visible[0]?.children?.map(item => item.path)).toEqual([
       '/admin/auto-config',
       '/admin/priority-scheduling',
       '/admin/channel-config',
+      '/admin/notification-channels',
       '/admin/account-quality',
       '/admin/token-guard-v2',
       '/admin/pelican-tests',

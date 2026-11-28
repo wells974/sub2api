@@ -432,12 +432,20 @@ type UpdateGroupInput struct {
 	CopyAccountsFromGroupIDs []int64
 }
 
+type OAuthImportSource string
+
+const (
+	OAuthImportJSON  OAuthImportSource = "json"
+	OAuthImportTwoFA OAuthImportSource = "two_fa"
+)
+
 type CreateAccountInput struct {
 	InitialAPIKeyDisposition *OAuthAPIKeyDispositionConfig `json:"-"`
 	ProxyMode                string                        // 受限写入在验权后选择代理。
-	InitialOpenAITwoFA       bool                          `json:"-"`
-	InitialAdmissionPlan     *ScheduledTestPlan            `json:"-"`
-	InitialQualityPlan       *ScheduledTestPlan            `json:"-"`
+	OAuthImportSource        OAuthImportSource             `json:"-"`
+	initialAutoSchedule      *bool
+	InitialAdmissionPlan     *ScheduledTestPlan `json:"-"`
+	InitialQualityPlan       *ScheduledTestPlan `json:"-"`
 	Name                     string
 	Notes                    *string
 	Platform                 string
@@ -454,6 +462,7 @@ type CreateAccountInput struct {
 	ExpiresAt                *int64
 	AutoPauseOnExpired       *bool
 	ProbeEnabled             *bool
+	GroupSyncEnabled         *bool
 	// SkipDefaultGroupBind prevents auto-binding to platform default group when GroupIDs is empty.
 	SkipDefaultGroupBind bool
 	// SkipMixedChannelCheck skips the mixed channel risk check when binding groups.
@@ -471,6 +480,7 @@ type ShadowOptions struct {
 }
 
 type UpdateAccountInput struct {
+	UpstreamGroupGuard  *UpstreamGroupSyncGuard
 	ProxyMode           string // 受限写入在验权后选择代理。
 	Platform            string // Empty preserves the existing platform.
 	Name                string
@@ -492,6 +502,7 @@ type UpdateAccountInput struct {
 	ExpiresAt             *int64
 	AutoPauseOnExpired    *bool
 	ProbeEnabled          *bool
+	GroupSyncEnabled      *bool
 	RateSyncEnabled       *bool
 	SkipMixedChannelCheck bool // 跳过混合渠道检查（用户已确认风险）
 }

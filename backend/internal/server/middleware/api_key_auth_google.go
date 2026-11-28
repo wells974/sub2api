@@ -3,6 +3,7 @@ package middleware
 import (
 	"errors"
 	"fmt"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -88,6 +89,10 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 				abortWithGoogleError(c, 503, "API key authentication is temporarily unavailable")
 				return
 			}
+			if errors.Is(err, service.ErrAPIKeyPrimaryGroupRequired) || errors.Is(err, service.ErrAPIKeyGroupPolicyUnavailable) {
+				abortWithGoogleError(c, infraerrors.Code(err), infraerrors.Message(err))
+				return
+			}
 			if abortIfAPIKeyLookupClientGone(c, err) {
 				return
 			}
@@ -141,6 +146,9 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 		if err != nil || c.IsAborted() {
 			return
 		}
+		// 请求头覆写变量（{{user_id}} 等）的取值来源，与 APIKeyAuth 保持一致。
+		c.Request = c.Request.WithContext(service.WithHeaderOverrideRequestScope(
+			c.Request.Context(), apiKey.User.ID, apiKey.ID, apiKey.GroupID))
 		if code, message, ok := validateAPIKeyGroupAvailable(apiKey); !ok {
 			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable)
 			if code == "GROUP_DELETED" {

@@ -69,15 +69,6 @@ func PrepareNativeImages(raw []byte) (*NativeImages, error) {
 // PrepareNativeImagesWithLimit is PrepareNativeImages with an administrator-
 // configurable per-request inline image limit.
 func PrepareNativeImagesWithLimit(raw []byte, maxImages int) (*NativeImages, error) {
-	return PrepareNativeImagesWithBudget(raw, maxImages, imageRelayMaxRequestBytes>>20)
-}
-
-// PrepareNativeImagesWithBudget keeps the original media validation and upload
-// plan; only the independently configured aggregate budget differs.
-func PrepareNativeImagesWithBudget(raw []byte, maxImages, maxTotalMiB int) (*NativeImages, error) {
-	if maxTotalMiB < 1 || maxTotalMiB > 2*MaxRelayRequestMiB {
-		return nil, fmt.Errorf("invalid native image total budget")
-	}
 	if maxImages < 1 {
 		maxImages = imageRelayMaxRequestImages
 	}
@@ -145,8 +136,8 @@ func PrepareNativeImagesWithBudget(raw []byte, maxImages, maxTotalMiB int) (*Nat
 				return nil, fmt.Errorf("basispoints inline image dimensions exceed the 64 megapixel limit")
 			}
 			total += size
-			if total > int64(maxTotalMiB)<<20 {
-				return nil, fmt.Errorf("basispoints inline images exceed the %d MiB request limit", maxTotalMiB)
+			if total > imageRelayMaxRequestBytes {
+				return nil, fmt.Errorf("basispoints inline images exceed the 32 MiB request limit")
 			}
 			attachment := InlineAttachment{MIME: mimeType, payload: payload, Size: size}
 			copy(attachment.digest[:], hash.Sum(nil))
@@ -262,13 +253,10 @@ func (c *AttachmentCache) get(ctx context.Context, scope string, img InlineAttac
 			entry.used = now
 			c.entries[key] = entry
 			c.mu.Unlock()
-			observeAttachmentHit(ctx)
 			return entry.id, nil
 		}
 		if flight := c.flights[key]; flight != nil {
 			c.mu.Unlock()
-			done := observeAttachmentWait(ctx)
-			defer done()
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
@@ -290,12 +278,10 @@ func (c *AttachmentCache) get(ctx context.Context, scope string, img InlineAttac
 		c.flights[key] = flight
 	}
 	c.mu.Unlock()
-	uploadDone := observeAttachmentUpload(ctx, img.Size)
 	id, err := upload(ctx, img)
 	if err == nil && !ValidAttachmentID(id) {
 		err = fmt.Errorf("basispoints returned an invalid attachment ID")
 	}
-	uploadDone(err)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.active--

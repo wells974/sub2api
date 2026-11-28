@@ -52,6 +52,7 @@ func SkipAudit(c *gin.Context) {
 // scalar, non-secret operation summaries. Request bodies and arbitrary maps
 // are never accepted through this channel.
 var auditExtraAllowedKeys = map[string]struct{}{
+	"admin_key_id": {}, "full_access": {}, "full_access_before": {},
 	"source": {}, "target_channel_id": {}, "reason_code": {}, "readback": {}, "remaining_count": {}, "target_user_id": {},
 	"anonymous_api_enabled": {},
 	"result":                {}, "error_code": {}, "enabled": {}, "blocking_enabled": {},
@@ -175,8 +176,6 @@ var auditActionOverrides = map[string]string{
 // 这类 body 的凭证内嵌在普通字符串值里，键级脱敏无法覆盖，整体不入库。
 var auditBodyOmittedRoutes = map[string]struct{}{
 	"PUT /api/v1/admin/quality-jev-settings":                                               {},
-	"POST /api/v1/admin/account-ops/initial-excel-login":                                   {},
-	"POST /api/v1/admin/account-ops/relogin/initial-excel-login":                           {},
 	"POST /api/v1/usage/settled-debits":                                                    {},
 	"PUT /api/v1/admin/providers/:id/profit-channel":                                       {},
 	"POST /api/v1/admin/providers/:id/profit-charges/sync":                                 {},

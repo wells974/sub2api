@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { apiClient } from '../../client'
 import {
   parseTwoFALoginText,
-  startTwoFALogin, getTwoFALogin, startExcelTwoFALogin, getExcelTwoFALogin, deleteExcelTwoFALogin
+  startTwoFALogin, getTwoFALogin
 } from '../openaiRelogin'
 
-vi.mock('../../client', () => ({ apiClient: { post: vi.fn(), get: vi.fn(), delete: vi.fn() } }))
+vi.mock('../../client', () => ({ apiClient: { post: vi.fn(), get: vi.fn() } }))
 
 describe('initial 2FA login input', () => {
   it('defaults new UI logins to credential operations', async () => {
@@ -38,18 +38,4 @@ describe('initial 2FA login input', () => {
   it.each(['', 'bad', 'u@example.com----p----', 'u@example.com----p----s----extra', 'u@example.com----p----s\nU@example.com----p----s'])('rejects invalid or duplicate entries', input => {
     expect(() => parseTwoFALoginText(input)).toThrow('invalid_batch')
   })
-})
-
-
-it('keeps BPS login lifecycle separate from the Codex login endpoint', async () => {
-  const entry = { email: 'bps@example.com', password: 'synthetic', mfa_secret: 'synthetic' }
-  vi.mocked(apiClient.post).mockResolvedValue({ data: { id: '123', status: 'running' } })
-  vi.mocked(apiClient.get).mockResolvedValue({ data: { id: '123', status: 'running' } })
-  await startExcelTwoFALogin(entry, 8)
-  expect(apiClient.post).toHaveBeenLastCalledWith('/admin/account-ops/relogin/initial-excel-login', { ...entry, proxy_id: 8 })
-  const options = { signal: new AbortController().signal }
-  await getExcelTwoFALogin('123', options)
-  expect(apiClient.get).toHaveBeenLastCalledWith('/admin/account-ops/relogin/initial-excel-login/123', options)
-  await deleteExcelTwoFALogin('123')
-  expect(apiClient.delete).toHaveBeenLastCalledWith('/admin/account-ops/relogin/initial-excel-login/123')
 })

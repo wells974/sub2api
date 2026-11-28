@@ -229,13 +229,6 @@ func newExcelBPSRequestTo(ctx context.Context, targetURL, accept string, body []
 // BPS deliberately bypasses Codex ticket/cookie injection and OAuth plugins:
 // only the selected account's bearer and ChatGPT account ID belong on this host.
 func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Context, account *Account, body []byte, start time.Time) (forwardResult *OpenAIForwardResult, forwardErr error) {
-	var bridge *basispoints.Bridge
-	ctx, latency := beginExcelBPSLatency(ctx, start)
-	diagnostics := newExcelBPSDiagnostics(body)
-	defer func() { diagnostics.log(ctx, account.ID, bridge, forwardErr != nil) }()
-	defer func(stream bool) {
-		logExcelBPSLatency(ctx, latency, account.ID, stream, forwardErr != nil)
-	}(gjson.GetBytes(body, "stream").Bool())
 	var compactUsage OpenAIUsage
 	var compactID string
 	originalImagePolicyModel := gjson.GetBytes(body, "model").String()
@@ -259,7 +252,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			if len(param) > 0 {
 				failureParam = param[0]
 			}
-			writeExcelBPSCompactFailure(c, status, code, message, failureParam)
+			writeOpenAICompactSSEFailureMessageParam(c, status, code, message, failureParam)
 		} else {
 			errorType := "invalid_request_error"
 			if status >= 500 {
@@ -269,20 +262,10 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			if len(param) > 0 && param[0] != "" {
 				errorBody["param"] = param[0]
 			}
-			c.JSON(status, gin.H{"error": PresentExcelBPSError(c, status, errorBody)})
+			c.JSON(status, gin.H{"error": errorBody})
 		}
 		return nil, &excelBPSForwardError{code: code}
 	}
-	onDemandCatalog, catalogConfigErr := excelBPSOnDemandCatalogEnabled(ctx)
-	if catalogConfigErr != nil {
-		return fail(503, "basispoints_tool_catalog_settings_invalid", catalogConfigErr.Error())
-	}
-	schemaCtx, schemaConfigErr := excelBPSSchemaRepairContext(ctx)
-	if schemaConfigErr != nil {
-		return fail(503, "basispoints_schema_repair_settings_invalid", schemaConfigErr.Error())
-	}
-	ctx = schemaCtx
-	defer func() { s.finishExcelBPSSchemaRepair(ctx, forwardResult) }()
 	originalModel := gjson.GetBytes(body, "model").String()
 	model := account.GetMappedModel(originalModel)
 	stream := gjson.GetBytes(body, "stream").Bool()
@@ -315,7 +298,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		return nil, err
 	}
-	imageSettings, err := s.excelBPSImageSettings(ctx)
+	imageSettings, err := s.settingService.GetExcelBPSImageRelaySettings(ctx)
 	if err != nil {
 		if isExcelBPSClientCancellation(c, err) {
 			return clientCanceled()
@@ -324,7 +307,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	}
 	// Reserve before the body is rewritten or converted. A rejection has not
 	// written anything yet, so the handler may switch to another account.
-	releaseImageAdmission, err := s.admitExcelBPSImageRequest(c, imageSettings.ExcelBPSImageRelaySettings, len(body))
+	releaseImageAdmission, err := s.admitExcelBPSImageRequest(c, imageSettings, len(body))
 	if err != nil {
 		return nil, err
 	}
@@ -386,8 +369,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	if err != nil {
 		return fail(400, "basispoints_request_invalid", err.Error())
 	}
-	latency.Advance("image_history")
-	imagePolicy, err := s.prepareExcelImagePolicyWithBudget(ctx, c, body, imageSettings, scope+"/model:"+model, identity != "" && !transient)
+	imagePolicy, err := s.prepareExcelImagePolicy(ctx, c, body, imageSettings, scope+"/model:"+model, identity != "" && !transient)
 	if err != nil {
 		var policyErr *excelImagePolicyError
 		if errors.As(err, &policyErr) {
@@ -395,26 +377,31 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		return fail(400, "basispoints_request_invalid", err.Error())
 	}
-	body, err = imagePolicy.reconcileBody(body, imageSettings)
-	if err != nil {
-		return fail(400, "basispoints_request_invalid", err.Error())
+	if len(imagePolicy.reconciledBody) > 0 {
+		maxImageMiB, maxTotalMiB := imageSettings.Limits.MaxImageMiB, imageSettings.Limits.MaxTotalMiB
+		if imageSettings.Mode == ExcelBPSImageModeNative {
+			maxImageMiB, maxTotalMiB = 20, 32
+		}
+		if err = basispoints.ValidateImageBudget(body, maxImageMiB, maxTotalMiB); err != nil {
+			return fail(400, "basispoints_request_invalid", err.Error())
+		}
+		body = imagePolicy.reconciledBody
 	}
 	var compactOutput []any
 	var compactUsageWire map[string]any
-	latency.Advance("image_prepare")
 	var images *basispoints.NativeImages
 	if imageSettings.Enabled && imageSettings.Mode == ExcelBPSImageModeNative {
-		images, err = basispoints.PrepareNativeImagesWithBudget(body, imagePolicy.maxImages, imagePolicy.uploadTotalMiB(imageSettings))
+		images, err = basispoints.PrepareNativeImagesWithLimit(body, imagePolicy.maxImages)
 		if err == nil {
 			body, err = images.Body()
 		}
 	} else {
 		var relay *basispoints.ImageRelay
-		relay, err = s.excelBPSImageRelayForSettings(imageSettings.ExcelBPSImageRelaySettings)
+		relay, err = s.excelBPSImageRelayForSettings(imageSettings)
 		if err != nil {
 			return fail(503, "basispoints_image_relay_unavailable", "Excel BPS image relay is unavailable")
 		}
-		body, err = relay.RewriteWithImageBudget(body, scope, imagePolicy.maxImages, imagePolicy.uploadTotalMiB(imageSettings))
+		body, err = relay.RewriteWithImageLimit(body, scope, imagePolicy.maxImages)
 	}
 	if err != nil {
 		if errors.Is(err, basispoints.ErrImageRelayFull) {
@@ -425,7 +412,6 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		return fail(400, "basispoints_request_invalid", err.Error())
 	}
-	latency.Advance("catalog_prepare")
 	// Validate the complete request before uploading any attachments. The native
 	// plan contains valid placeholder IDs until all local protocol checks pass.
 	var replay *basispoints.ReplayCache
@@ -441,13 +427,13 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 	}
 	var upstreamBody []byte
+	var bridge *basispoints.Bridge
 	if images != nil {
 		upstreamBody, bridge, err = images.PrepareWithCatalog(scope, replay, catalog)
 	} else {
 		upstreamBody, bridge, err = basispoints.PrepareWithCatalog(body, scope, replay, catalog)
 	}
 	if err != nil {
-		diagnostics.observePreparationError(err)
 		if errors.Is(err, basispoints.ErrStateUnavailable) {
 			return fail(503, "basispoints_state_unavailable", basispoints.ErrStateUnavailable.Error())
 		}
@@ -461,7 +447,6 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		return fail(400, "basispoints_request_invalid", err.Error())
 	}
-	latency.Advance("authorization_proxy")
 	// Acquire the logical request exit before token lookup: an expired Excel
 	// grant must refresh through the same lease as attachments and generation.
 	if c != nil {
@@ -513,7 +498,6 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		defer lease.Release()
 		requestAcquire = pinnedExcelBPSAcquire(attachmentProxy, lease)
 	}
-	latency.Advance("attachment_upload")
 	if images != nil && images.HasImages() {
 		attachmentScope := ""
 		if identity != "" {
@@ -545,16 +529,13 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			}
 			return fail(status, code, "Excel BPS attachment upload failed; request was not replayed and account scheduling was not changed")
 		}
-		latency.Advance("attachment_reprepare")
 		upstreamBody, bridge, err = bridge.Reprepare(body)
 		if err != nil {
 			return fail(400, "basispoints_request_invalid", err.Error())
 		}
 	}
-	ctx = withExcelBPSRateLimitDiagnostics(ctx, account, token, model)
 	requestCtx := WithHTTPUpstreamRedirectsDisabled(WithHTTPUpstreamProfile(ctx, HTTPUpstreamProfileExcelBPS))
 
-	latency.Advance("auto_compact")
 	if imagePolicy.split > 0 {
 		logger.LegacyPrintf("service.openai_excel_bps", "image policy auto compact: account_id=%d history_images=%d new_images=%d limit=%d", account.ID, basispoints.CountInlineImages(imagePolicy.history.Input[:imagePolicy.split]), basispoints.CountInlineImages(imagePolicy.history.Input[imagePolicy.split:]), imageSettings.Limits.MaxImages)
 		uploaded, inspectErr := basispoints.InspectImageHistory(body)
@@ -593,7 +574,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		s.UpdateCodexUsageSnapshotFromHeaders(ctx, account.ID, cr.Header)
 		compactEffort = bridge.Effort
-		compactResponse, compactErr := basispoints.ReadImageCompactionWithContext(requestCtx, cr.Body, func(payload []byte) { s.parseSSEUsageBytes(payload, &compactUsage) })
+		compactResponse, compactErr := basispoints.ReadImageCompaction(cr.Body, func(payload []byte) { s.parseSSEUsageBytes(payload, &compactUsage) })
 		_ = cr.Body.Close()
 		if compactResponse != nil {
 			encoded, _ := json.Marshal(map[string]any{"type": "response.completed", "response": compactResponse})
@@ -609,8 +590,8 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		next := append(append([]any{}, window...), uploaded.Input[imagePolicy.split:]...)
 		// Count retained inline tool images, not the uploaded attachment placeholders.
-		if budgetErr := imagePolicy.validateContinuation(window, imageSettings); budgetErr != nil {
-			return fail(400, "basispoints_image_compaction_insufficient", budgetErr.Error())
+		if basispoints.CountInlineImages(window)+basispoints.CountInlineImages(imagePolicy.history.Input[imagePolicy.split:]) > imageSettings.Limits.MaxImages {
+			return fail(400, "basispoints_image_compaction_insufficient", "Compacted history still exceeds the image limit; reduce new images or compact manually")
 		}
 		body, compactErr = uploaded.WithInput(next, false)
 		if compactErr != nil {
@@ -624,17 +605,9 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			return fail(503, "basispoints_image_checkpoint_unavailable", "Could not save compacted history safely; retry or run compact manually")
 		}
 		compactOutput = window
-		if stream {
-			basispoints.GuardSchemaRepairCompactedWindow(requestCtx, window)
-		}
 		if cl != nil {
 			requestAcquire = pinnedExcelBPSAcquire(cp, cl)
 		}
-	}
-	latency.Advance("catalog_delivery")
-	upstreamBody, err = prepareExcelBPSOnDemandCatalog(ctx, bridge, upstreamBody, body, onDemandCatalog)
-	if err != nil {
-		return fail(500, "basispoints_tool_catalog_preparation_failed", err.Error())
 	}
 	SetActualOpenAIUpstreamEndpoint(c, "/basispoints/api/responses")
 	SetOpsUpstreamModel(c, model)
@@ -642,7 +615,6 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	if err != nil {
 		return fail(400, "basispoints_request_invalid", err.Error())
 	}
-	latency.Advance("generation_headers")
 	sent := time.Now()
 	resp, lease, proxyURL, err := s.doExcelBPSRequest(requestCtx, c, account, scope, upstreamBody, token, accountID, requestAcquire)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(sent).Milliseconds())
@@ -788,18 +760,11 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		return fail(resp.StatusCode, errorCode, message)
 	}
-	latency.Advance("generation_receive")
 	// BPS and Codex share quota. Refresh at the HTTP boundary even if the client
 	// disconnects or a later stream/protocol error prevents normal completion.
 	s.UpdateCodexUsageSnapshotFromHeaders(ctx, account.ID, resp.Header)
-	// Capture billing metadata from the original request. Repairs own a separate
-	// body below and must not change the service tier reported for this request.
-	initialServiceTier := extractOpenAIServiceTierFromBody(upstreamBody)
 	var converted io.ReadCloser
 	if searchPlan != nil {
-		// Search owns a multi-round native conversation. Keep its no-repair/no-replay
-		// boundary: ordinary corrections use the original generation body, which
-		// cannot safely continue a later search round.
 		converted = bridge.StreamWithSearch(requestCtx, resp.Body, upstreamBody, searchPlan,
 			func(searchCtx context.Context, query string) (basispoints.SearchResult, error) {
 				return s.executeExcelBPSSearch(searchCtx, account, searchPlan, token, accountID, proxyURL, model, query)
@@ -860,7 +825,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			}
 			s.UpdateCodexUsageSnapshotFromHeaders(repairCtx, account.ID, repairResp.Header)
 			repairUpstreamBody = correctedBody
-			return basispoints.ReadClientToolRepairResponseWithContext(repairCtx, repairResp.Body, validation)
+			return basispoints.ReadToolRepairResponse(repairResp.Body)
 		}, func(repairCtx context.Context) (io.ReadCloser, error) {
 			markPriorityAttemptFailure(repairCtx)
 			repairBody, err := basispoints.RepairRequest(repairUpstreamBody)
@@ -917,7 +882,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	// The bridge sees the body after group policy mapping. Keep the original
 	// client effort for usage display, and the BPS-normalized effort for billing.
 	requestedEffort := coalesceRequestedReasoningEffort(RequestedReasoningEffortFromContext(ctx), &bridge.RequestedEffort)
-	result := &OpenAIForwardResult{Model: originalModel, UpstreamModel: model, UpstreamEndpoint: "/basispoints/api/responses", Stream: stream, ReasoningEffort: &bridge.Effort, RequestedReasoningEffort: requestedEffort, ServiceTier: initialServiceTier, RequestID: resp.Header.Get("x-request-id")}
+	result := &OpenAIForwardResult{Model: originalModel, UpstreamModel: model, UpstreamEndpoint: "/basispoints/api/responses", Stream: stream, ReasoningEffort: &bridge.Effort, RequestedReasoningEffort: requestedEffort, ServiceTier: extractOpenAIServiceTierFromBody(upstreamBody), RequestID: resp.Header.Get("x-request-id")}
 	if stream {
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
@@ -1011,7 +976,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			}
 		}
 		if stream {
-			if _, err = c.Writer.WriteString(presentExcelBPSErrorLine(c, line) + "\n"); err != nil {
+			if _, err = c.Writer.WriteString(line + "\n"); err != nil {
 				result.ClientDisconnect = true
 				if isExcelBPSClientCancellation(c, c.Request.Context().Err()) {
 					MarkOpsClientCancellation(c, stream)
@@ -1019,13 +984,11 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				result.Duration = time.Since(start)
 				return result, err
 			}
-			basispoints.ObserveClientLatencyLine(ctx, line)
 			if line == "" {
 				c.Writer.Flush()
 			}
 		}
 	}
-	latency.Advance("finish")
 	result.Duration = time.Since(start)
 	result.UpstreamTerminalEvent = terminal
 	if err = scanner.Err(); err != nil || terminal == "" {
@@ -1046,10 +1009,10 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		s.rateLimitService.observeQualityStatus(ctx, account, http.StatusBadGateway)
 		MarkResponseCommitted(c)
 		if stream {
-			writeExcelBPSIncompleteStream(c)
+			_, _ = c.Writer.WriteString("event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"code\":\"basispoints_stream_incomplete\",\"message\":\"Upstream stream ended before completion\"}}}\n\n")
 			c.Writer.Flush()
 		} else {
-			c.JSON(502, gin.H{"error": PresentExcelBPSError(c, 502, gin.H{"type": "server_error", "code": "basispoints_stream_incomplete", "message": "Excel BPS stream ended before completion"})})
+			c.JSON(502, gin.H{"error": gin.H{"type": "server_error", "code": "basispoints_stream_incomplete", "message": "Excel BPS stream ended before completion"}})
 		}
 		return result, fmt.Errorf("excel BPS stream incomplete")
 	}
@@ -1059,9 +1022,9 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	if !stream {
 		if upstreamFailure != nil {
 			if StopOpenAICompactSSEKeepaliveCommitted(c) {
-				writeExcelBPSCompactFailure(c, upstreamFailure.Status, upstreamFailure.Code, upstreamFailure.Message)
+				writeOpenAICompactSSEFailureMessage(c, upstreamFailure.Status, upstreamFailure.Code, upstreamFailure.Message)
 			} else {
-				c.JSON(upstreamFailure.Status, gin.H{"error": presentExcelBPSFailureDetails(c, upstreamFailure.Status, gin.H(upstreamFailure.Details()))})
+				c.JSON(upstreamFailure.Status, gin.H{"error": upstreamFailure.Details()})
 			}
 		} else if terminal != "response.completed" {
 			message := "Excel BPS did not complete the response"
@@ -1071,13 +1034,12 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				message = bridgeFailure.Message
 			}
 			if StopOpenAICompactSSEKeepaliveCommitted(c) {
-				writeExcelBPSCompactFailure(c, http.StatusBadGateway, "basispoints_protocol_error", message)
+				writeOpenAICompactSSEFailureMessage(c, http.StatusBadGateway, "basispoints_protocol_error", message)
 			} else {
-				c.JSON(http.StatusBadGateway, gin.H{"error": presentExcelBPSFailureDetails(c, http.StatusBadGateway, gin.H(detail))})
+				c.JSON(http.StatusBadGateway, gin.H{"error": detail})
 			}
 		} else {
 			c.Data(200, "application/json", completed)
-			basispoints.ObserveJSONReturn(ctx)
 		}
 	}
 	if terminal != "response.completed" {

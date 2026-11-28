@@ -272,15 +272,6 @@ func TestExcelBPSSearchBusinessThroughForward(t *testing.T) {
 }
 
 func TestExcelBPSSearchBusinessFailuresThroughForward(t *testing.T) {
-	for _, presentation := range []string{"neutral", "legacy"} {
-		t.Run(presentation, func(t *testing.T) {
-			t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", presentation)
-			checkExcelBPSSearchBusinessFailuresThroughForward(t, presentation)
-		})
-	}
-}
-
-func checkExcelBPSSearchBusinessFailuresThroughForward(t *testing.T, presentation string) {
 	for _, tc := range []struct {
 		failure, phase, reason string
 		sends                  int
@@ -309,22 +300,13 @@ func checkExcelBPSSearchBusinessFailuresThroughForward(t *testing.T, presentatio
 					wantStatus = http.StatusBadGateway
 				}
 				require.Equal(t, wantStatus, rec.Code, "preserve an already committed HTTP status")
-				require.NotContains(t, rec.Body.String(), `"type":"response.completed"`)
-				require.NotContains(t, rec.Body.String(), "event: response.completed")
+				require.NotContains(t, rec.Body.String(), "response.completed")
 				detail := issue871Error(t, rec.Body.String(), mode != "json")
+				require.Equal(t, "basispoints_search_failed", detail.Get("code").String())
+				require.Contains(t, detail.Get("message").String(), "phase="+tc.phase+"; reason="+tc.reason)
 				ops, ok := GetOpsStreamError(c)
 				require.True(t, ok)
 				require.Equal(t, 502, ops.IntendedStatus)
-				if tc.failure == "invalid_arguments" || tc.failure == "unknown_tool" {
-					neutralCode := "request_failed"
-					if tc.failure == "invalid_arguments" {
-						neutralCode = "invalid_tool_response"
-					}
-					assertMergedSearchValidation(t, detail, ops, presentation, neutralCode)
-				} else {
-					assertMergedSearchPresentation(t, detail, ops, presentation)
-					require.Contains(t, ops.Message, "phase="+tc.phase+"; reason="+tc.reason)
-				}
 				for _, private := range []string{"PRIVATE_BODY", "PRIVATE_TOKEN", "PRIVATE_KEY", "PRIVATE_QUERY", issue871BusinessQuery, "test-token", "test-account"} {
 					require.NotContains(t, detail.Raw+ops.Message+ops.UpstreamDetail, private)
 				}

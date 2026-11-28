@@ -1061,6 +1061,7 @@ func TestAPIContracts(t *testing.T) {
 					"pelican_showcase_enabled": false,
 					"pelican_showcase_config": {"max_items": 20, "auto_cleanup": true, "retention_days": 7},
 					"subscription_enabled": true,
+					"api_key_multi_group_enabled": true,
 					"model_plaza_enabled": false,
 					"model_plaza_require_auth": false,
 					"model_plaza_description": "",
@@ -1439,6 +1440,7 @@ func TestAPIContracts(t *testing.T) {
 					"pelican_showcase_enabled": false,
 					"pelican_showcase_config": {"max_items": 20, "auto_cleanup": true, "retention_days": 7},
 					"subscription_enabled": true,
+					"api_key_multi_group_enabled": true,
 					"model_plaza_enabled": false,
 					"model_plaza_require_auth": false,
 					"model_plaza_description": "",
@@ -2036,9 +2038,7 @@ func (s *stubAccountRepo) Update(ctx context.Context, account *service.Account) 
 func (s *stubAccountRepo) UpdateWithAccountBillingSettings(
 	ctx context.Context,
 	account *service.Account,
-	probeEnabled *bool,
-	rateSyncEnabled *bool,
-	rateMultiplier *float64,
+	settings service.AccountBillingSettingsUpdate,
 ) error {
 	return errors.New("not implemented")
 }

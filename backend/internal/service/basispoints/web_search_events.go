@@ -29,27 +29,20 @@ func searchIndex(value any) (int, error) {
 	}
 	return n, nil
 }
-func (o *searchTextObserver) observe(kind string, payload, roundUsage object) error {
-	response, _ := payload["response"].(object)
-	if response != nil && o.state.id == "" {
-		o.state.id = text(response["id"])
-		o.state.model = text(response["model"])
-		if o.state.id != "" {
-			if err := o.state.emit("response.created", object{"response": object{"id": o.state.id, "model": o.state.model, "status": "in_progress", "output": []any{}}}); err != nil {
-				return err
+func (o *searchTextObserver) observe(kind string, payload object) error {
+	if response, ok := payload["response"].(object); ok {
+		if o.state.id == "" {
+			o.state.id = text(response["id"])
+			o.state.model = text(response["model"])
+			if o.state.id != "" {
+				if err := o.state.emit("response.created", object{"response": object{"id": o.state.id, "model": o.state.model, "status": "in_progress", "output": []any{}}}); err != nil {
+					return err
+				}
 			}
 		}
-	}
-	if len(roundUsage) > 0 && o.state.id != "" {
-		total := addRepairUsage(o.state.usage, roundUsage)
-		if err := o.state.emit("response.in_progress", object{"response": object{"id": o.state.id, "model": o.state.model, "status": "in_progress", "output": []any{}, "usage": total}}); err != nil {
-			return err
+		if usage, ok := response["usage"].(object); ok && o.state.id != "" {
+			return o.state.emit("response.in_progress", object{"response": object{"id": o.state.id, "model": o.state.model, "status": "in_progress", "output": []any{}, "usage": addRepairUsage(o.state.usage, usage)}})
 		}
-		if _, ok := payload["usage"].(object); ok {
-			payload["usage"] = total
-		}
-	}
-	if response != nil {
 		return nil
 	}
 	item, _ := payload["item"].(object)

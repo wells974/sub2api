@@ -283,12 +283,45 @@ func transportTarget(args object) string {
 	return ""
 }
 
+// Sum billable usage across model continuations, including failed corrections.
+func addRepairUsage(total object, value any) object {
+	usage, _ := value.(object)
+	if usage == nil {
+		return total
+	}
+	result := make(object)
+	for k, v := range total {
+		result[k] = v
+	}
+	for k, v := range usage {
+		if nested, ok := v.(object); ok {
+			previous, _ := result[k].(object)
+			result[k] = addRepairUsage(previous, nested)
+			continue
+		}
+		var n int64
+		var err error
+		switch v := v.(type) {
+		case json.Number:
+			n, err = v.Int64()
+		case int:
+			n = int64(v)
+		case int64:
+			n = v
+		default:
+			continue
+		}
+		if err == nil && n >= 0 {
+			previous, _ := result[k].(int64)
+			result[k] = previous + n
+		}
+	}
+	return result
+}
+
 // BuildToolRepairRequest extends an already prepared BPS request. It preserves
 // the model, effort, scope and native history; no client tool is executed here.
 func BuildToolRepairRequest(prepared []byte, failed map[string]any, validation error) ([]byte, error) {
-	if feedback, ok := validation.(*schemaRepairFeedback); ok {
-		return buildSchemaRepairRequest(prepared, failed, feedback)
-	}
 	items, ok := repairableTools(failed)
 	if !ok || validation == nil {
 		return nil, fmt.Errorf("basispoints tool response is not eligible for correction")
@@ -345,10 +378,6 @@ func BuildToolRepairRequest(prepared []byte, failed map[string]any, validation e
 // ReadToolRepairResponse withholds all intermediate events from the client.
 // Only the terminal native response is authoritative, as in the primary stream.
 func ReadToolRepairResponse(reader io.Reader) (map[string]any, error) {
-	return readToolRepairResponse(context.Background(), reader, false)
-}
-
-func readToolRepairResponse(ctx context.Context, reader io.Reader, preserveObservedUsage bool) (map[string]any, error) {
 	var response object
 	var observedUsage object
 	var terminalError error
@@ -361,15 +390,18 @@ func readToolRepairResponse(ctx context.Context, reader io.Reader, preserveObser
 		if decode(data, &payload) != nil || payload == nil {
 			return fmt.Errorf("invalid Basispoints correction SSE event")
 		}
-		current, _ := payload["response"].(object)
-		if sample := eventUsage(payload, current); len(sample) > 0 {
-			observedUsage = maxReportedUsage(observedUsage, sample)
+		if current, ok := payload["response"].(object); ok {
+			if usage, ok := current["usage"].(object); ok {
+				observedUsage = maxReportedUsage(observedUsage, usage)
+			}
+		}
+		if usage, ok := payload["usage"].(object); ok {
+			observedUsage = maxReportedUsage(observedUsage, usage)
 		}
 		kind := text(payload["type"])
 		if kind == "" {
 			kind = event
 		}
-		observeRateLimit(ctx, "tool_repair", kind, payload)
 		item, _ := payload["item"].(object)
 		if kind == "response.output_item.done" && isTool(item) {
 			if len(pending) >= 1024 {
@@ -380,9 +412,6 @@ func readToolRepairResponse(ctx context.Context, reader io.Reader, preserveObser
 		switch kind {
 		case "response.completed", "response.failed", "response.cancelled", "response.incomplete", "error":
 			response, _ = payload["response"].(object)
-			if usage, ok := payload["usage"].(object); ok && response != nil {
-				response["usage"] = usage
-			}
 			if kind != "response.completed" || response == nil {
 				if failure := classifyUpstreamFailure(kind, payload); failure != nil {
 					terminalError = failure
@@ -408,12 +437,8 @@ func readToolRepairResponse(ctx context.Context, reader io.Reader, preserveObser
 	hasTerminalResponse := response != nil
 	if response == nil && observedUsage != nil {
 		response = object{"usage": observedUsage}
-	} else if response != nil {
-		restoreRoundUsage(response, observedUsage)
-	}
-	if preserveObservedUsage && response != nil {
-		current, _ := response["usage"].(object)
-		response["usage"] = maxReportedUsage(current, observedUsage)
+	} else if response != nil && response["usage"] == nil {
+		response["usage"] = observedUsage
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		return response, err

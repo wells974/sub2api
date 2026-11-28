@@ -14,7 +14,7 @@ function fixture(override={}) {
     return {finalUrl:url};
   }};
   const helpers={
-    isPasswordLoginPage:url=>{try{return new URL(url).pathname==='/log-in/password';}catch{return false;}},
+    isPasswordLoginPage:url=>new URL(url).pathname==='/log-in/password',
     isAuthLoginPage:url=>new URL(url).pathname==='/log-in',
     getContinueUrl:data=>data?.continue_url,
     createSentinelHeaders:async()=>({'fixture':'sentinel'}),
@@ -44,43 +44,6 @@ test('wrong callback state is never accepted',async()=>{
 });
 test('an email OTP requirement is not bypassed',async()=>{
   const f=fixture({authJsonStep:async()=>({data:{continue_url:'https://auth.openai.com/email-verification'}})});
-  await assert.rejects(loginExcelPassword(f.client,f.options,f.helpers),/EMAIL_VERIFICATION_REQUIRED/);
+  await assert.rejects(loginExcelPassword(f.client,f.options,f.helpers),/ADDITIONAL_VERIFICATION_REQUIRED/);
   assert.equal(f.calls.includes('password'),false);
-});
-
-test('relative password steps resolve against the authorization origin', async()=>{
-  const f=fixture({authJsonStep:async()=>({data:{continue_url:'/log-in/password'}})});
-  await loginExcelPassword(f.client,f.options,f.helpers);
-  assert.ok(f.client.excelOAuth);
-  assert.ok(f.calls.includes('password'));
-});
-
-test('an intermediate server redirect may lead to the password page', async()=>{
-  const f=fixture({authJsonStep:async()=>({data:{continue_url:'/login-transition'}})});
-  const follow=f.client.follow;
-  f.client.follow=async(url,options)=>url.endsWith('/login-transition')
-    ? {finalUrl:'https://auth.openai.com/log-in/password'} : follow(url,options);
-  await loginExcelPassword(f.client,f.options,f.helpers);
-  assert.ok(f.client.excelOAuth);
-});
-
-for (const [next, code] of [
-  [undefined,'EXCEL_UNEXPECTED_LOGIN_STEP'],
-  ['/unknown-step','EXCEL_UNEXPECTED_LOGIN_STEP'],
-  ['https://untrusted.example/log-in/password','EXCEL_UNEXPECTED_LOGIN_STEP'],
-  ['/consent','EXCEL_INTERACTION_REQUIRED'],
-  ['/add-phone','EXCEL_PHONE_VERIFICATION_REQUIRED'],
-]) {
-  test(`classifies ${next || 'missing next step'} without attempting credentials`, async()=>{
-    const f=fixture({authJsonStep:async()=>({data:{continue_url:next}})});
-    await assert.rejects(loginExcelPassword(f.client,f.options,f.helpers), {message:code});
-    assert.equal(f.calls.includes('password'),false);
-    assert.equal(f.client.excelOAuth,undefined);
-  });
-}
-
-test('an email verification redirect after password is identified separately', async()=>{
-  const f=fixture({continueFlow:async()=>({finalUrl:'https://auth.openai.com/email-verification'})});
-  await assert.rejects(loginExcelPassword(f.client,f.options,f.helpers), {message:'EXCEL_EMAIL_VERIFICATION_REQUIRED'});
-  assert.equal(f.client.excelOAuth,undefined);
 });

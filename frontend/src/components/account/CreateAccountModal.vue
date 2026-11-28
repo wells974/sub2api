@@ -50,15 +50,30 @@
       class="space-y-5"
     >
       <div>
-        <label class="input-label">{{ t('admin.accounts.accountName') }}</label>
+        <div class="mb-1 flex flex-wrap items-center justify-between gap-2">
+          <label class="input-label mb-0">{{ t('admin.accounts.accountName') }}</label>
+          <UpstreamGroupSyncButton
+            :user-id="authStore.user?.id"
+            v-if="form.type === 'apikey'"
+            v-model:name="form.name"
+            v-model:notes="form.notes"
+            :source="upstreamGroupSource"
+            allow-auto
+            :auto="upstreamGroupSyncEnabled"
+            @update:auto="setUpstreamGroupSync"
+          />
+        </div>
         <input
           v-model="form.name"
           type="text"
-          :required="!isGrokSSOInputMethod && !usesTwoFALogin"
+          :required="!isGrokSSOInputMethod && !isOpenAITwoFA"
           class="input"
           :placeholder="t('admin.accounts.enterAccountName')"
           data-tour="account-form-name"
         />
+        <p v-if="form.type === 'apikey' && upstreamGroupSyncEnabled" class="input-hint">
+          {{ t('admin.accounts.upstreamBilling.autoSyncGroupHint') }}
+        </p>
       </div>
       <div>
         <label class="input-label">{{ t('admin.accounts.notes') }}</label>
@@ -492,19 +507,9 @@
             </div>
           </button>
         </div>
-        <p v-if="usesTwoFALogin" class="input-hint">{{ t('openaiRelogin.twoFA.nameHint') }}</p>
+        <p v-if="isOpenAITwoFA" class="input-hint">{{ t('openaiRelogin.twoFA.nameHint') }}</p>
         <div v-if="isOpenAIBPSOAuth" class="mt-3 space-y-2" data-testid="bps-oauth-models">
           <p class="input-hint">{{ t('admin.accounts.oauth.openai.excelLoginHint') }}</p>
-          <div class="flex flex-wrap gap-4">
-            <label class="flex items-center gap-2 text-sm">
-              <input v-model="bpsLoginMethod" type="radio" value="manual" data-testid="bps-login-manual" />
-              {{ t('admin.accounts.oauth.openai.excelManualLogin') }}
-            </label>
-            <label class="flex items-center gap-2 text-sm">
-              <input v-model="bpsLoginMethod" type="radio" value="two_fa" data-testid="bps-login-two-fa" />
-              {{ t('admin.accounts.oauth.openai.excelAutoLogin') }}
-            </label>
-          </div>
           <label class="input-label">{{ t('admin.accounts.openai.excelBPSModels') }}</label>
           <ModelWhitelistSelector v-model="bpsOAuthModels" platform="openai" />
         </div>
@@ -2087,6 +2092,8 @@
             </div>
 
             <HeaderOverrideEditor
+
+              :user-id="authStore.user?.id"
               :rows="headerOverrideRows"
               @update:rows="headerOverrideRows = $event"
             />
@@ -2542,7 +2549,10 @@
           </div>
 
           <HeaderOverrideEditor
+
+            :user-id="authStore.user?.id"
             :rows="headerOverrideRows"
+            :allow-variables="false"
             @update:rows="headerOverrideRows = $event"
           />
         </div>
@@ -3282,7 +3292,7 @@
           :proxies="proxies" :loading="proxiesLoading" :load-error="proxiesLoadError"
           :user-id="authStore.user?.id" @retry="emit('retry-proxies')" />
         <ProxySelector v-else v-model="form.proxy_id" :proxies="proxies" />
-        <p v-if="usesTwoFALogin && openaiProxyMode === 'request'" class="input-hint" role="alert" data-testid="openai-proxy-two-fa-hint">
+        <p v-if="isOpenAITwoFA && openaiProxyMode === 'request'" class="input-hint" role="alert" data-testid="openai-proxy-two-fa-hint">
           {{ t('admin.accounts.openai.proxyTwoFAFirstImport') }}
         </p>
       </div>
@@ -4041,7 +4051,7 @@
         <input v-model="syncModelsOnCreate" type="checkbox" data-testid="sync-models-on-create" :disabled="twoFABusy || modelSyncLoginBusy || currentOAuthLoading" />
         {{ t('admin.accounts.newModelSync.enable') }}
       </label>
-      <OpenAITwoFAImport v-if="usesTwoFALogin" :excel-oauth="isOpenAIBPSOAuth" :proxy-id="form.proxy_id" :import-credential="importTwoFACredential" @busy="twoFABusy = $event" @reset="modelSyncResults = []">
+      <OpenAITwoFAImport v-if="isOpenAITwoFA" :import-credential="importTwoFACredential" @busy="twoFABusy = $event" @reset="modelSyncResults = []">
         <template #model-sync="{ email }">
           <NewAccountModelSyncResult v-for="row in modelSyncResults.filter(item => item.name === email)" :key="row.id" :result="row" @retry="retryModelSync" />
         </template>
@@ -4086,7 +4096,7 @@
 
     </div>
 
-    <ul v-if="!usesTwoFALogin && modelSyncResults.length" class="space-y-2">
+    <ul v-if="!isOpenAITwoFA && modelSyncResults.length" class="space-y-2">
       <li v-for="row in modelSyncResults" :key="row.id" class="flex flex-wrap items-center justify-between gap-2 text-sm">
         <span>{{ row.name }} · #{{ row.id }}</span>
         <NewAccountModelSyncResult :result="row" @retry="retryModelSync" />
@@ -4138,11 +4148,11 @@
         </button>
       </div>
       <div v-else class="flex justify-between gap-3">
-        <button type="button" class="btn btn-secondary" :disabled="twoFABusy || modelSyncLoginBusy" @click="usesTwoFALogin ? handleClose() : goBackToBasicInfo()">
+        <button type="button" class="btn btn-secondary" :disabled="twoFABusy || modelSyncLoginBusy" @click="isOpenAITwoFA ? handleClose() : goBackToBasicInfo()">
           {{ t('common.back') }}
         </button>
         <button
-          v-if="!usesTwoFALogin && isManualInputMethod"
+          v-if="!isOpenAITwoFA && isManualInputMethod"
           type="button"
           :disabled="!canExchangeCode || modelSyncLoginBusy"
           class="btn btn-primary"
@@ -4476,6 +4486,7 @@ import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
 import OpenAIProxySettings from '@/components/account/OpenAIProxySettings.vue'
 import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
+import UpstreamGroupSyncButton from '@/components/account/UpstreamGroupSyncButton.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
@@ -4768,7 +4779,7 @@ const resolveOpenAIMaintenanceProxyId = () => {
 }
 function validateOpenAIRequestProxies(): boolean {
   if (form.platform !== 'openai' || accountCategory.value !== 'oauth-based' || openaiProxyMode.value !== 'request') return true
-  if (usesTwoFALogin.value) {
+  if (isOpenAITwoFA.value) {
     appStore.showError(t('admin.accounts.openai.proxyTwoFAFirstImport'))
     return false
   }
@@ -4800,8 +4811,6 @@ const isOpenAIBPSOAuth = computed(() => form.platform === 'openai' && accountCat
 // Includes unresolved login ownership while the importer is paused for Retry.
 const twoFABusy = ref(false)
 const isOpenAITwoFA = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiTwoFA.value)
-const bpsLoginMethod = ref<'manual' | 'two_fa'>('manual')
-const usesTwoFALogin = computed(() => isOpenAITwoFA.value || (isOpenAIBPSOAuth.value && bpsLoginMethod.value === 'two_fa'))
 // 「降智后自动开启 BPS」：OpenAI OAuth / 2FA 添加时可选，账号建好后按这里的设置给每个新账号建一条质量运维规则。
 const autoBPS = useAccountAutoBPS()
 const globalBpsEnabled = computed(() => appStore.cachedPublicSettings?.excel_bps_enabled !== false)
@@ -4812,7 +4821,15 @@ const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const providerImportMode = ref(false), providerSelection = ref<ProviderSelection | null>(null)
 const apiKeyValue = ref('')
+const upstreamGroupSyncEnabled = ref(false)
+function setUpstreamGroupSync(enabled: boolean) {
+  upstreamGroupSyncEnabled.value = enabled
+  if (enabled) upstreamBillingAutoProbeEnabled.value = true
+}
 const upstreamBillingAutoProbeEnabled = ref(true)
+watch(upstreamBillingAutoProbeEnabled, (enabled) => {
+  if (!enabled) upstreamGroupSyncEnabled.value = false
+})
 
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）账号类型、API 协议与端点 ──
 // 多协议供应商（国产厂商与走通用表单的供应商）的接入模式；OpenCode 用 openCodeAccountMode。
@@ -5020,11 +5037,23 @@ function onCnPresetSelect(preset: { mode: CnAccountMode; protocol: CnApiProtocol
   apiKeyBaseUrl.value = preset.url
 }
 
-const syncPreviewCredentials = computed(() => {
-  if (!apiKeyValue.value.trim()) return undefined
-  const baseUrl = isMultiProtocolPlatform.value && apiProtocol.value === 'adaptive'
+const previewBaseUrl = computed(() =>
+  isMultiProtocolPlatform.value && apiProtocol.value === 'adaptive'
     ? adaptiveBaseUrls.value.chat_completions.trim() || apiKeyBaseUrl.value.trim()
     : apiKeyBaseUrl.value.trim()
+)
+
+const upstreamGroupSource = computed(() => {
+  const antigravity = form.platform === 'antigravity'
+  const baseURL = antigravity ? upstreamBaseUrl.value.trim() : previewBaseUrl.value
+  const apiKey = (antigravity ? upstreamApiKey.value : apiKeyValue.value).trim()
+  return baseURL && apiKey
+    ? { platform: form.platform, base_url: baseURL, api_key: apiKey, proxy_id: form.proxy_id }
+    : null
+})
+
+const syncPreviewCredentials = computed(() => {
+  if (!apiKeyValue.value.trim()) return undefined
   const modelMapping = buildModelMappingObject(
     modelRestrictionMode.value,
     allowedModels.value,
@@ -5033,7 +5062,7 @@ const syncPreviewCredentials = computed(() => {
   return {
     platform: form.platform,
     type: form.type,
-    base_url: baseUrl || undefined,
+    base_url: previewBaseUrl.value || undefined,
     api_key: apiKeyValue.value.trim(),
     proxy_id: authStore.isObserver ? undefined : form.proxy_id ?? undefined,
     ...(modelMapping ? { model_mapping: modelMapping } : {})
@@ -5115,7 +5144,9 @@ const validateGrokOAuthUpstreamConfig = (): boolean => {
     }
   }
   if (headerOverrideEnabled.value) {
-    const headerError = validateHeaderOverrideRows(headerOverrideRows.value)
+    const headerError = validateHeaderOverrideRows(headerOverrideRows.value, {
+      allowVariables: false
+    })
     if (headerError) {
       appStore.showError(t(`admin.accounts.headerOverride.${headerError}`))
       return false
@@ -6197,7 +6228,6 @@ const resetForm = () => {
   initialChannelConfirmed.value = false
   pendingChannelCreations.clear()
   step.value = 1
-  bpsLoginMethod.value = 'manual'
   openaiTwoFA.value = false
   openaiBPSOAuth.value = false
   bpsOAuthModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
@@ -6235,6 +6265,7 @@ const resetForm = () => {
   apiKeyValue.value = ''
   upstreamRequestIdHeader.value = ''
   upstreamBillingAutoProbeEnabled.value = true
+  upstreamGroupSyncEnabled.value = false
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
   editQuotaWeeklyLimit.value = null
@@ -6629,7 +6660,7 @@ const handleSubmit = async () => {
   }
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {
-    if (!isGrokSSOInputMethod.value && !usesTwoFALogin.value && !form.name.trim()) {
+    if (!isGrokSSOInputMethod.value && !isOpenAITwoFA.value && !form.name.trim()) {
       appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
       return
     }
@@ -6921,6 +6952,7 @@ const handleSubmit = async () => {
     group_ids: form.group_ids,
     extra: withAccountExtraSettings(extra),
     upstream_billing_probe_enabled: upstreamBillingAutoProbeEnabled.value,
+    upstream_billing_group_sync_enabled: upstreamGroupSyncEnabled.value,
     auto_pause_on_expired: autoPauseOnExpired.value
   })
 }
@@ -7068,6 +7100,7 @@ const createAccountAndFinish = async (
     // 上游倍率探测对全部 API-key 平台开放（antigravity upstream 走本 helper）；
     // 非 apikey 类型（bedrock/oauth）不传，后端不动作。
     upstream_billing_probe_enabled: type === 'apikey' || (type === 'gateway' && gatewayKind.value === 'sub2api') ? upstreamBillingAutoProbeEnabled.value : undefined,
+    upstream_billing_group_sync_enabled: type === 'apikey' ? upstreamGroupSyncEnabled.value : undefined,
     auto_pause_on_expired: autoPauseOnExpired.value
   })
 }
@@ -7531,13 +7564,11 @@ const containsUnsupportedProxyGroupIdentity = (content: string): boolean => {
 // Reuse Session import normalization and identity deduplication after 2FA login.
 const importTwoFACredential = async (credential: Record<string, unknown>, email: string, login: OpenAIReloginCredentials, signal?: AbortSignal): Promise<'created' | 'skipped'> => {
   signal?.throwIfAborted()
-  const excel = isOpenAIBPSOAuth.value
-  if (excel && credential.client_id !== OPENAI_EXCEL_OAUTH_CLIENT_ID) throw new Error('invalid_excel_credentials')
   if (!validateOpenAIRequestProxies()) throw new Error(t('admin.accounts.openai.proxyNoUsable'))
   const credentialExtras = buildOpenAICodexImportCredentialExtras()
   if (credentialExtras === null) throw new Error('invalid_account_settings')
   const result = await importWithUpstream({
-    ...(!excel ? { initialize_openai_two_fa: true } : {}),
+    initialize_openai_two_fa: true,
     content: JSON.stringify(credential),
     name: form.name.trim() ? `${form.name.trim()} (${email})` : email,
     notes: form.notes || null,
@@ -7568,8 +7599,7 @@ const importTwoFACredential = async (credential: Record<string, unknown>, email:
     .map(item => item.account_id)
     .filter((id): id is number => typeof id === 'number' && id > 0))]
   if (!accountIds.length) throw new Error('import_missing_account_id')
-  // Standalone Excel grants refresh independently; never enroll them in Codex re-login.
-  for (const accountId of excel ? [] : accountIds) {
+  for (const accountId of accountIds) {
     signal?.throwIfAborted()
     const enrollment = {
       account_id: accountId, login_email: login.email,

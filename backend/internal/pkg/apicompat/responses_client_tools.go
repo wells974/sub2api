@@ -245,7 +245,11 @@ func rewriteClientToolHistory(value any, adapter *ResponsesClientToolMapping) (b
 				changed = true
 			case "tool_search_call":
 				if adapter.ToolSearch {
-					LowerClientToolSearchCall(typed)
+					typed["type"] = "function_call"
+					typed["name"] = toolSearchProxyName
+					typed["arguments"] = rawObjectString(typed["arguments"])
+					delete(typed, "execution")
+					normalizeLoweredFunctionItemID(typed)
 					changed = true
 				}
 			case "tool_search_output":
@@ -515,7 +519,12 @@ func restoreClientToolValue(value any, adapter *ResponsesClientToolMapping) bool
 				delete(typed, "namespace")
 				changed = true
 			} else if adapter.ToolSearch && name == toolSearchProxyName {
-				RestoreClientToolSearchCall(typed)
+				typed["type"] = "tool_search_call"
+				retypeResponsesToolCallItemID(typed, "tool_search_call")
+				typed["execution"] = "client"
+				typed["arguments"] = json.RawMessage(toolSearchCallArgumentsJSON(rawObjectString(typed["arguments"])))
+				delete(typed, "name")
+				delete(typed, "namespace")
 				changed = true
 			}
 		}
@@ -524,25 +533,6 @@ func restoreClientToolValue(value any, adapter *ResponsesClientToolMapping) bool
 		}
 	}
 	return changed
-}
-
-// LowerClientToolSearchCall maps a native client search and its item ID to a function call.
-func LowerClientToolSearchCall(item map[string]any) {
-	item["type"] = "function_call"
-	item["name"] = toolSearchProxyName
-	item["arguments"] = rawObjectString(item["arguments"])
-	delete(item, "execution")
-	normalizeLoweredFunctionItemID(item)
-}
-
-// RestoreClientToolSearchCall restores one validated, lowered function call to the Responses wire format.
-func RestoreClientToolSearchCall(item map[string]any) {
-	item["type"] = "tool_search_call"
-	retypeResponsesToolCallItemID(item, "tool_search_call")
-	item["execution"] = "client"
-	item["arguments"] = json.RawMessage(toolSearchCallArgumentsJSON(rawObjectString(item["arguments"])))
-	delete(item, "name")
-	delete(item, "namespace")
 }
 
 // ResponsesClientToolStreamRestorer restores client tool stream lifecycles.

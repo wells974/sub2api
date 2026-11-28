@@ -36,23 +36,6 @@ class ExcelAdapterTests(unittest.TestCase):
             with self.subTest(changes=changes),self.assertRaises(ValueError):
                 adapter.validate_excel_credentials({**self.credentials(),**changes},email,workspace)
 
-    def test_malformed_token_claims_are_rejected_with_bounded_reasons(self):
-        for payload, reason in [
-            ({'exp': float('nan')}, 'excel_token_expired_or_missing_expiry'),
-            ({'exp': float('inf')}, 'excel_token_expired_or_missing_expiry'),
-            ({'exp': True}, 'excel_token_expired_or_missing_expiry'),
-            ({'https://api.openai.com/auth': ['unexpected']}, 'excel_workspace_mismatch'),
-        ]:
-            credentials = self.credentials()
-            claims = {**adapter.jwt_payload(credentials['access_token']), **payload}
-            credentials['access_token'] = token(claims)
-            with self.subTest(payload=payload), self.assertRaisesRegex(ValueError, '^'+reason+'$'):
-                adapter.validate_excel_credentials(credentials, 'test@example.invalid')
-        credentials = self.credentials()
-        credentials['id_token'] = token({'aud': adapter.CLIENT_ID, 'email': None})
-        with self.assertRaisesRegex(ValueError, '^excel_email_mismatch$'):
-            adapter.validate_excel_credentials(credentials, 'test@example.invalid')
-
     def test_unknown_runtime_fails_before_creating_or_modifying_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)/'source';(root/'src').mkdir(parents=True)
@@ -70,7 +53,7 @@ class ExcelAdapterTests(unittest.TestCase):
             with patch.object(adapter,'excel_source',return_value='excel'):
                 staged=adapter.prepare_excel_runtime(root,output)
             self.assertEqual(staged.read_text(),'excel');self.assertEqual(script.read_text(),'original')
-            self.assertEqual((staged.parent.parent/'node_modules').resolve(),(root/'node_modules').resolve())
+            self.assertEqual((staged.parent.parent/'node_modules').resolve(),root/'node_modules')
 
     def test_contract_change_never_silently_partially_patches(self):
         with self.assertRaises(ValueError):adapter.replace_exact('old old','old','new')

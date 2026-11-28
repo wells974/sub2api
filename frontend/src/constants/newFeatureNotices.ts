@@ -4,6 +4,12 @@
  * browser; use a new ID to announce the feature again in a later release.
  */
 export const NEW_FEATURE_NOTICES = {
+  apiKeyMultiGroupPolicy: 'api-key-multi-group-policy-v1',
+  monitorV3ComponentModels: 'channel-monitor-v3-component-models',
+  adminKeyFullAccess: 'admin-key-full-access-compatibility',
+  upstreamBillingGroupSync: 'upstream-billing-group-sync',
+  headerOverrideVariables: 'header-override-identity-variables',
+  domesticRouteAutoSchedule: 'domestic-route-auto-schedule',
   modelPlazaCurrency: 'model-plaza-display-currency-20261121',
   exaSearch: 'exa-search-provider',
   claudeWindowCost: 'claude-window-cost-estimate',
@@ -81,6 +87,7 @@ export const NEW_FEATURE_NOTICES = {
   vipAutoCreditEmail: 'vip-auto-credit-email',
   oauthInitialTOTPRotation429: 'oauth-initial-totp-rotation-on-429-initial-announcement',
   oauthInitialDisableScheduling429: 'oauth-initial-disable-scheduling-on-429-initial-announcement',
+  oauthImportScheduling: 'oauth-import-scheduling-initial-announcement',
   oauthInitialWSSettings: 'oauth-initial-ws-settings-initial-announcement',
   aiOpsCodex: 'ai-ops-codex-observe-initial-announcement',
   aiOpsProposalCancel: 'ai-ops-proposal-cancel-initial-announcement',

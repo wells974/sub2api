@@ -69,7 +69,6 @@ func TestExcelBPSAccountSearchUsesPinnedGrantAndAccumulatesUsage(t *testing.T) {
 }
 
 func TestExcelBPSSearchFailureDoesNotReplayOrDisableAccount(t *testing.T) {
-	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Assert the upstream wire format; neutral has separate coverage.
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{excelSearchCallResponse(), {StatusCode: 403, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"PRIVATE_UPSTREAM_BODY"}}`))}}}
 	svc := openAIClientToolsTestService(upstream)
 	account := excelAccount()

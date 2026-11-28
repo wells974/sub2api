@@ -86,11 +86,7 @@ func validateToolNumberBudget(value any) error {
 	return visit(value, 0)
 }
 
-type toolArgumentsSchemaError struct {
-	Diagnostic *ToolArgumentsDiagnostic
-	// Internal repair feedback is derived from the same upstream-selected failure.
-	diagnostic *ArgumentObservation
-}
+type toolArgumentsSchemaError struct{ Diagnostic *ToolArgumentsDiagnostic }
 
 func (e toolArgumentsSchemaError) Error() string {
 	if e.Diagnostic == nil {

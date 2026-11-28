@@ -1,9 +1,9 @@
 <template>
   <div class="space-y-4">
     <CredentialEncryptionSetup @ready="encryptionReady = $event" />
-    <p class="input-hint">{{ t(excelOauth ? 'admin.accounts.oauth.openai.excelAutoHint' : 'openaiRelogin.twoFA.hint') }}</p>
-    <a :href="excelOauth ? '/admin/token-guard-v2' : '/admin/token-guard-v2#relogin-service'" target="_blank" rel="noopener noreferrer" class="text-primary-600">
-      {{ t(excelOauth ? 'admin.accounts.oauth.openai.excelAutoSettings' : 'openaiRelogin.twoFA.settings') }}
+    <p class="input-hint">{{ t('openaiRelogin.twoFA.hint') }}</p>
+    <a href="/admin/token-guard-v2#relogin-service" target="_blank" rel="noopener noreferrer" class="text-primary-600">
+      {{ t('openaiRelogin.twoFA.settings') }}
     </a>
     <template v-if="!rows.length">
       <label for="two-fa-credentials" class="input-label">{{ t('openaiRelogin.twoFA.credentials') }}</label>
@@ -18,11 +18,7 @@
     <ul v-if="rows.length" class="space-y-2" aria-live="polite">
       <li v-for="(row, index) in rows" :key="row.entry.email" class="flex justify-between gap-4 text-sm">
         <span>{{ index + 1 }}. {{ row.entry.email }}</span>
-        <span>
-          {{ t(row.failureKey || `openaiRelogin.twoFA.states.${row.status}`) }}
-          <slot name="model-sync" :email="row.entry.email" />
-          <span v-if="row.failureStageKey">{{ t('openaiRelogin.twoFA.failureStage', { stage: t(row.failureStageKey) }) }}</span>
-        </span>
+        <span>{{ t(`openaiRelogin.twoFA.states.${row.status}`) }} <slot name="model-sync" :email="row.entry.email" /></span>
       </li>
     </ul>
     <div class="flex gap-3">
@@ -43,18 +39,12 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import CredentialEncryptionSetup from './CredentialEncryptionSetup.vue'
 import { useI18n } from 'vue-i18n'
-import { deleteTwoFALogin, getTwoFALogin, parseTwoFALoginText, startTwoFALogin, startExcelTwoFALogin, getExcelTwoFALogin, deleteExcelTwoFALogin } from '@/api/admin/openaiRelogin'
+import { deleteTwoFALogin, getTwoFALogin, parseTwoFALoginText, startTwoFALogin } from '@/api/admin/openaiRelogin'
 import type { OpenAIReloginCredentials } from '@/api/admin/openaiRelogin'
 
 const props = defineProps<{
-  excelOauth?: boolean
-  proxyId?: number | null
   importCredential: (credential: Record<string, unknown>, email: string, login: OpenAIReloginCredentials, signal?: AbortSignal) => Promise<'created' | 'skipped'>
 }>()
-// Keep job ownership bound to the original queue during parent reset/unmount.
-const loginAPI = props.excelOauth
-  ? { start: (entry: OpenAIReloginCredentials) => startExcelTwoFALogin(entry, props.proxyId), get: getExcelTwoFALogin, delete: deleteExcelTwoFALogin }
-  : { start: startTwoFALogin, get: getTwoFALogin, delete: deleteTwoFALogin }
 const emit = defineEmits<{ busy: [value: boolean]; reset: [] }>()
 const { t } = useI18n()
 type Row = {
@@ -64,43 +54,6 @@ type Row = {
   jobId?: string
   cleanup?: Promise<void>
   retiring?: boolean
-  failureKey?: string
-  failureStageKey?: string
-}
-
-const excelFailureCodes = ['runtime_error', 'transport_error', 'security_check', 'additional_verification',
-  'email_verification', 'phone_verification', 'interaction_required', 'unexpected_login_step',
-  'password_rejected', 'totp_rejected', 'callback_state_mismatch', 'workspace_not_listed', 'client_id',
-  'session_selection', 'protocol_error', 'timeout', 'invalid_credentials', 'worker_failed', 'credential_storage_failed']
-const excelFailureStages = ['starting', 'protocol_connecting', 'web_login', 'password_accepted', 'mfa_challenge',
-  'mfa_accepted', 'excel_authorize', 'excel_token_exchange', 'applying_credentials']
-
-// Render only local, allowlisted messages: upstream errors can contain secrets.
-function loginFailureKey(cause: unknown): string | undefined {
-  const error = cause as { reason?: string; code?: string; metadata?: { worker_reason?: string } } | null
-  const reason = error?.reason || error?.code
-  if (reason === 'OPENAI_REAUTH_WORKER_UNAVAILABLE') {
-    const workerReason = error?.metadata?.worker_reason
-    if (workerReason && ['unsupported_platform', 'release_required', 'runtime_source_invalid', 'runtime_install_failed', 'worker_start_failed', 'worker_exited', 'external_not_configured', 'external_offline', 'api_unreachable'].includes(workerReason)) {
-      return `tokenGuardV2.runtimeReasons.${workerReason}`
-    }
-  }
-  const keys: Record<string, string> = {
-    OPENAI_REAUTH_UNAVAILABLE: 'workerUnavailable',
-    OPENAI_REAUTH_WORKER_UNAVAILABLE: 'workerUnavailable',
-    EXCEL_LOGIN_WORKER_UNAVAILABLE: 'excelWorkerUnavailable',
-    EXCEL_LOGIN_WORKER_PREPARING: 'workerPreparing',
-    EXCEL_LOGIN_PROXY_UNAVAILABLE: 'proxyUnavailable',
-    EXCEL_LOGIN_BUSY: 'busy',
-    EXCEL_LOGIN_IN_PROGRESS: 'inProgress',
-    EXCEL_LOGIN_NOT_FOUND: 'expired',
-    EXCEL_LOGIN_INVALID: 'invalid',
-    OPENAI_REAUTH_ENCRYPTION_KEY_REQUIRED: 'encryptionRequired',
-    CREDENTIAL_ENCRYPTION_STORAGE_FAILED: 'encryptionUnavailable',
-    ERR_NETWORK: 'network',
-  }
-  const key = reason && Object.prototype.hasOwnProperty.call(keys, reason) ? keys[reason] : undefined
-  return key ? `openaiRelogin.twoFA.failures.${key}` : undefined
 }
 const raw = ref('')
 const encryptionReady = ref(false)
@@ -153,7 +106,7 @@ function discardJob(row: Row): Promise<void> {
   row.retiring = true
   // Keep both ownership and the shared cleanup promise until DELETE confirms
   // retirement. A failed DELETE fences this slot and identity across Retry.
-  row.cleanup = loginAPI.delete(id).then(() => {
+  row.cleanup = deleteTwoFALogin(id).then(() => {
     row.jobId = undefined
     row.retiring = false
   }).finally(() => { row.cleanup = undefined })
@@ -204,8 +157,6 @@ async function run() {
 }
 
 async function runRow(row: Row, signal: AbortSignal) {
-  row.failureKey = undefined
-  row.failureStageKey = undefined
   try {
     if (row.retiring) await discardJob(row)
     signal.throwIfAborted()
@@ -214,23 +165,17 @@ async function runRow(row: Row, signal: AbortSignal) {
       // Keep the job ID on polling failures; explicit retry resumes that job.
       // Do not abort this short POST: Axios could discard an accepted job ID.
       // Stop fences the worker until its response arrives and is retired.
-      if (!row.jobId) row.jobId = (await loginAPI.start(row.entry)).id
+      if (!row.jobId) row.jobId = (await startTwoFALogin(row.entry)).id
       signal.throwIfAborted()
-      let job = await loginAPI.get(row.jobId, { signal })
+      let job = await getTwoFALogin(row.jobId, { signal })
       signal.throwIfAborted()
       while (job.status === 'running') {
         await pollDelay(signal)
         signal.throwIfAborted()
-        job = await loginAPI.get(row.jobId!, { signal })
+        job = await getTwoFALogin(row.jobId!, { signal })
         signal.throwIfAborted()
       }
       if (job.status !== 'succeeded' || !job.credential) {
-        if (props.excelOauth && job.error_code && excelFailureCodes.includes(job.error_code)) {
-          row.failureKey = `openaiRelogin.twoFA.excelFailures.${job.error_code}`
-        }
-        if (props.excelOauth && job.error_stage && excelFailureStages.includes(job.error_stage)) {
-          row.failureStageKey = `openaiRelogin.twoFA.excelStages.${job.error_stage}`
-        }
         await discardJob(row)
         throw new Error('login_failed')
       }
@@ -246,8 +191,6 @@ async function runRow(row: Row, signal: AbortSignal) {
     row.entry.mfa_secret = ''
   } catch (cause: unknown) {
     if (signal.aborted) {
-      row.failureKey = undefined
-      row.failureStageKey = undefined
       try {
         if (!row.retiring || row.cleanup) await discardJob(row)
       } catch {
@@ -261,7 +204,6 @@ async function runRow(row: Row, signal: AbortSignal) {
       (cause as { response?: { status?: number } })?.response?.status
     if (status === 404 && !row.retiring) row.jobId = undefined
     row.status = row.credential ? 'importFailed' : 'failed'
-    if (!row.credential) row.failureKey ||= loginFailureKey(cause)
   }
   // A polling/cleanup failure has not terminated the server job. Its worker
   // stays reserved rather than dequeuing a fourth live account pipeline.
@@ -270,9 +212,9 @@ async function runRow(row: Row, signal: AbortSignal) {
 
 function reset() {
   if (!disposed && (busy.value || hasOwnedJobs.value)) return
+  if (!disposed) emit('reset')
   for (const row of rows.value) void discardJob(row).catch(() => {})
   rows.value = []
-  if (!disposed) emit('reset')
   raw.value = ''
   error.value = ''
 }

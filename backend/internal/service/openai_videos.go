@@ -282,6 +282,9 @@ func (s *OpenAIGatewayService) ForwardOpenAIVideo(
 	ctx context.Context, c *gin.Context, account *Account, endpoint GrokMediaEndpoint,
 	taskID, upstreamTaskID string, body []byte, contentType string, info GrokMediaRequestInfo,
 ) (*OpenAIForwardResult, *OpenAIVideoCreation, error) {
+	if !accountAllowedByAPIKeyGroup(ctx, account) {
+		return nil, nil, denyOpenAITurn("group_membership_changed")
+	}
 	if err := CheckUpstreamModeration(ctx, c, account); err != nil {
 		return nil, nil, err
 	}
@@ -331,7 +334,7 @@ func (s *OpenAIGatewayService) ForwardOpenAIVideo(
 	if err != nil {
 		return nil, nil, err
 	}
-	account.ApplyHeaderOverrides(req.Header)
+	account.ApplyHeaderOverridesWithContext(req.Context(), req.Header)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 	if method == http.MethodPost {

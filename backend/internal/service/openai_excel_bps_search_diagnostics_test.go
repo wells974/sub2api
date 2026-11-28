@@ -57,48 +57,7 @@ func issue871Error(t *testing.T, raw string, sse bool) gjson.Result {
 	return gjson.Result{}
 }
 
-func assertMergedSearchPresentation(t *testing.T, detail gjson.Result, ops OpsStreamError, presentation string) {
-	t.Helper()
-	require.Equal(t, "basispoints_search_failed", ops.Code)
-	require.Nil(t, ops.BridgeFailure)
-	if presentation == "legacy" {
-		require.Equal(t, "basispoints_search_failed", detail.Get("code").String())
-		require.Equal(t, ops.Message, detail.Get("message").String())
-	} else {
-		require.Equal(t, "request_failed", detail.Get("code").String())
-		for _, privateField := range []string{"basispoints", "search_diagnostic", "phase=", "reason="} {
-			require.NotContains(t, detail.Raw, privateField)
-		}
-	}
-}
-
-func assertMergedSearchValidation(t *testing.T, detail gjson.Result, ops OpsStreamError, presentation, neutralCode string) {
-	t.Helper()
-	require.Equal(t, 502, ops.IntendedStatus)
-	require.Equal(t, "basispoints_protocol_error", ops.Code)
-	require.NotNil(t, ops.BridgeFailure, "local validation must retain gateway ownership")
-	require.Equal(t, "bridge_tool_validation", ops.BridgeFailure.FailureStage)
-	require.Equal(t, "search_no_repair", ops.BridgeFailure.RepairSkippedReason)
-	require.NotContains(t, ops.UpstreamDetail, "search_diagnostic")
-	if presentation == "legacy" {
-		require.Equal(t, "basispoints_protocol_error", detail.Get("code").String())
-	} else {
-		require.Equal(t, neutralCode, detail.Get("code").String())
-		require.NotContains(t, detail.Raw, "basispoints")
-		require.False(t, detail.Get("failure_stage").Exists())
-	}
-}
-
 func TestExcelBPSSearchDiagnosticsThroughForward(t *testing.T) {
-	for _, presentation := range []string{"neutral", "legacy"} {
-		t.Run(presentation, func(t *testing.T) {
-			t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", presentation)
-			checkExcelBPSSearchDiagnosticsThroughForward(t, presentation)
-		})
-	}
-}
-
-func checkExcelBPSSearchDiagnosticsThroughForward(t *testing.T, presentation string) {
 	for _, tc := range []struct {
 		name, phase, reason string
 		sends, observedHTTP int
@@ -225,32 +184,25 @@ func checkExcelBPSSearchDiagnosticsThroughForward(t *testing.T, presentation str
 				require.True(t, account.Schedulable)
 				require.False(t, svc.isExcelBPSCoolingDown(account, "gpt-6-astra"))
 				require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
-				require.NotContains(t, rec.Body.String(), `"type":"response.completed"`)
-				require.NotContains(t, rec.Body.String(), "event: response.completed")
+				require.NotContains(t, rec.Body.String(), "response.completed")
 				detail := issue871Error(t, rec.Body.String(), mode != "json")
-				ops, ok := GetOpsStreamError(c)
-				require.True(t, ok)
-				if tc.reason == "invalid_tool_response" {
-					assertMergedSearchValidation(t, detail, ops, presentation, "request_failed")
-					for _, sensitive := range []string{"PRIVATE_BODY", "PRIVATE_QUERY", "PRIVATE_TOKEN", "PRIVATE_KEY", "test-token", "test-account"} {
-						require.NotContains(t, detail.Raw+ops.Message+ops.UpstreamDetail, sensitive)
-					}
-					return
-				}
-				assertMergedSearchPresentation(t, detail, ops, presentation)
+				require.Equal(t, "basispoints_search_failed", detail.Get("code").String())
 				if mode != "compact_keepalive" {
 					require.Equal(t, "server_error", detail.Get("type").String())
 				}
-				message := ops.Message
+				message := detail.Get("message").String()
 				require.Contains(t, message, "request was not replayed")
 				require.Contains(t, message, "phase="+tc.phase+"; reason="+tc.reason, "issue871_expected_search_diagnosis")
+				ops, ok := GetOpsStreamError(c)
+				require.True(t, ok)
 				require.Equal(t, 502, ops.IntendedStatus)
 				require.Equal(t, "server_error", ops.ErrType)
 				require.Equal(t, 200, ops.UpstreamStatus, "initial generation HTTP is distinct from search evidence")
+				require.Equal(t, message, ops.Message)
 				opsDiagnostic := gjson.Get(ops.UpstreamDetail, "search_diagnostic")
 				require.Equal(t, tc.phase, opsDiagnostic.Get("phase").String())
 				require.Equal(t, tc.reason, opsDiagnostic.Get("reason").String())
-				if mode != "compact_keepalive" && presentation == "legacy" {
+				if mode != "compact_keepalive" {
 					require.Equal(t, opsDiagnostic.Raw, detail.Get("search_diagnostic").Raw)
 				}
 				if tc.observedHTTP == 0 {
@@ -326,7 +278,6 @@ func TestExcelBPSSearchCancellationDoesNotSendContinuation(t *testing.T) {
 }
 
 func TestExcelBPSSearchRepairProvenanceThroughForward(t *testing.T) {
-	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Verify protocol details; neutral is tested separately.
 	for _, repair := range []string{"transport", "unknown_target"} {
 		for _, mode := range []string{"json", "sse", "compact_keepalive"} {
 			t.Run(repair+"/"+mode, func(t *testing.T) {
@@ -382,8 +333,7 @@ func TestExcelBPSSearchRepairProvenanceThroughForward(t *testing.T) {
 				for _, unsafe := range []string{"403", "upstream_status", "PRIVATE_BODY", "http_rejected"} {
 					require.NotContains(t, detail.Raw+ops.Message+ops.UpstreamMessage+ops.UpstreamDetail, unsafe)
 				}
-				require.NotContains(t, rec.Body.String(), `"type":"response.completed"`)
-				require.NotContains(t, rec.Body.String(), "event: response.completed")
+				require.NotContains(t, rec.Body.String(), "response.completed")
 				require.True(t, account.IsExcelBPSEnabled())
 				require.False(t, svc.isExcelBPSCoolingDown(account, "gpt-5.6-sol"))
 			})

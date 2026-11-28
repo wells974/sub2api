@@ -29,8 +29,6 @@ type excelImagePolicyState struct {
 	maxImages      int
 	reconciledBody []byte
 	checkpoints    []basispoints.ImageCheckpoint
-
-	messageImageBoundary int
 }
 type excelImagePolicyCacheState struct {
 	Progress    basispoints.ImageProgress
@@ -81,7 +79,7 @@ func (s *OpenAIGatewayService) prepareExcelImagePolicy(ctx context.Context, c *g
 	}
 	state.checkpoints = cached.Checkpoints
 	if len(cached.Checkpoints) > 0 {
-		changed, e := reconcileExcelMessageImages(ctx, scope, history, cached.Checkpoints)
+		changed, e := history.Reconcile(cached.Checkpoints)
 		if e != nil {
 			return nil, imagePolicyError(400, "basispoints_image_history_boundary", e.Error())
 		}
@@ -204,8 +202,6 @@ func addImagePolicyUsage(to *OpenAIUsage, from OpenAIUsage) {
 	to.ImageOutputTokens += from.ImageOutputTokens
 	to.ImageCacheReadTokens += from.ImageCacheReadTokens
 	to.CacheCreationInputTokens += from.CacheCreationInputTokens
-	to.CacheCreation30mInputTokens += from.CacheCreation30mInputTokens
-	to.CacheCreation12hInputTokens += from.CacheCreation12hInputTokens
 	to.CacheReadInputTokens += from.CacheReadInputTokens
 }
 
@@ -216,8 +212,6 @@ func subtractImagePolicyUsage(to *OpenAIUsage, from OpenAIUsage) {
 	from.ImageOutputTokens = -from.ImageOutputTokens
 	from.ImageCacheReadTokens = -from.ImageCacheReadTokens
 	from.CacheCreationInputTokens = -from.CacheCreationInputTokens
-	from.CacheCreation30mInputTokens = -from.CacheCreation30mInputTokens
-	from.CacheCreation12hInputTokens = -from.CacheCreation12hInputTokens
 	from.CacheReadInputTokens = -from.CacheReadInputTokens
 	addImagePolicyUsage(to, from)
 }

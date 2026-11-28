@@ -78,7 +78,7 @@ func lastMeaningfulInput(items []any) int {
 	for index := len(items) - 1; index >= 0; index-- {
 		item, _ := items[index].(object)
 		switch text(item["type"]) {
-		case "additional_tools", "tool_search_output", "compaction_trigger", "reasoning", "configuration_update":
+		case "additional_tools", "tool_search_output", "compaction_trigger", "reasoning":
 			continue
 		}
 		return index

@@ -65,7 +65,6 @@ type SocketEvidence struct {
 	Scope           string   `json:"scope"`
 }
 type ContentObservation struct {
-	RequestBodyBytes             *int64         `json:"request_body_bytes,omitempty"`
 	SSEEventFirstMS              *float64       `json:"sse_event_first_ms"`
 	SemanticFirstMS              *float64       `json:"semantic_first_ms"`
 	ReasoningFirstMS             *float64       `json:"reasoning_first_ms"`
@@ -87,10 +86,6 @@ func UnknownContentObservation() ContentObservation {
 }
 func DeriveContentObservation(s Snapshot) ContentObservation {
 	out := UnknownContentObservation()
-	if s.BodyComplete && s.BodyBytes >= 0 {
-		size := s.BodyBytes
-		out.RequestBodyBytes = &size
-	}
 	if s.Truncated || len(s.Attempts) == 0 {
 		return out
 	}

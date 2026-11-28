@@ -1173,7 +1173,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			}
 			return
 		}
-		body := service.RestoreOpsErrorPresentation(c, w.capturedBytes())
+		body := w.capturedBytes()
 		parsed := parseOpsErrorResponse(body)
 		if !parsed.StreamFailure {
 			if terminal, ok := w.capturedTerminalError(); ok {
@@ -1325,6 +1325,9 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			}
 		}
 		suppressOpsUpstreamAttributionForClientRejection(entry)
+		if status := c.GetInt(service.OpsContextRejectionStatusKey); status > 0 {
+			entry.UpstreamStatusCode = &status
+		}
 
 		if apiKey != nil {
 			entry.APIKeyID = &apiKey.ID
@@ -1701,7 +1704,7 @@ func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus 
 		entry.IsBusinessLimited = false
 		entry.UpstreamErrorDetail = nil
 	}
-	if streamErr.UpstreamWSFailure != nil {
+	if streamErr.UpstreamWSFailure != nil && !streamErr.RequestScoped {
 		entry.ErrorPhase, entry.ErrorOwner, entry.ErrorSource = "upstream", "provider", "upstream_transport"
 		entry.IsBusinessLimited = false
 		// A WS business status is not an HTTP response from the provider.
@@ -1709,6 +1712,10 @@ func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus 
 		entry.UpstreamErrors = nil
 	}
 	suppressOpsUpstreamAttributionForClientRejection(entry)
+	if streamErr.RequestScoped && streamErr.Code == "context_length_exceeded" && streamErr.UpstreamStatus > 0 {
+		status := streamErr.UpstreamStatus
+		entry.UpstreamStatusCode = &status
+	}
 
 	if apiKey != nil {
 		entry.APIKeyID = &apiKey.ID

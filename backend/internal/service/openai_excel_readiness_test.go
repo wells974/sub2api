@@ -16,49 +16,34 @@ import (
 )
 
 func TestExcelAuthorizationStateSurvivesModelAndTestPaths(t *testing.T) {
-	for _, mode := range []string{"", "legacy"} {
-		t.Run("presentation="+mode, func(t *testing.T) {
-			t.Setenv(excelBPSErrorPresentationEnv, mode)
-			for _, tc := range []struct{ status, workerError, reason string }{
-				{"", "", "REQUIRED"}, {"queued", "", "PENDING"}, {"running", "", "PENDING"},
-				{"callback_processing", "", "PENDING"}, {"failed", "upstream secret=do-not-expose", "FAILED"},
-				{"failed", "stage=web_login, reason=security_check, secret=do-not-expose", "VERIFICATION_REQUIRED"},
-				{"failed", "reason=additional_verification", "VERIFICATION_REQUIRED"}, {"succeeded", "", "REQUIRED"},
-				{"failed", "reason=email_verification", "VERIFICATION_REQUIRED"},
-				{"failed", "reason=phone_verification", "VERIFICATION_REQUIRED"},
-				{"failed", "reason=unexpected_login_step", "FAILED"},
-				{"failed", "reason=interaction_required", "FAILED"},
-			} {
-				t.Run(tc.status+tc.reason, func(t *testing.T) {
-					reauth, reader, repo, _, _ := newExcelReauthTestService(t)
-					account := reader.account
-					account.Status = StatusActive
-					account.Extra = map[string]any{"openai_excel_bps": true}
-					if tc.status != "" {
-						repo.task = &OpenAIOAuthReauthTaskRecord{OAuthProfile: "excel", Status: tc.status, Error: tc.workerError}
-					}
-					upstream := &httpUpstreamRecorder{}
-					gateway := openAIClientToolsTestService(upstream)
-					gateway.excelOAuthReauth = reauth
-					_, err := gateway.FetchOpenAIModelsList(context.Background(), account)
-					require.Equal(t, "OPENAI_EXCEL_AUTH_"+tc.reason, infraerrors.Reason(err))
-					require.Contains(t, infraerrors.Message(err), "Credential Operations")
-					rec := httptest.NewRecorder()
-					c, _ := gin.CreateTestContext(rec)
-					c.Request = httptest.NewRequest("POST", "/test", nil)
-					svc := &AccountTestService{openaiGatewayService: gateway}
-					err = svc.testExcelBPSAccountConnection(c, account, "gpt-6-astra", "hi")
-					require.ErrorContains(t, err, "basispoints_auth_"+strings.ToLower(tc.reason))
-					if mode == "legacy" {
-						require.ErrorContains(t, err, "Credential Operations")
-					} else {
-						require.ErrorContains(t, err, "The service is temporarily unavailable")
-						require.NotContains(t, rec.Body.String(), "Credential Operations")
-					}
-					require.NotContains(t, rec.Body.String(), "do-not-expose")
-					require.Nil(t, upstream.lastReq)
-				})
+	for _, tc := range []struct{ status, workerError, reason string }{
+		{"", "", "REQUIRED"}, {"queued", "", "PENDING"}, {"running", "", "PENDING"},
+		{"callback_processing", "", "PENDING"}, {"failed", "upstream secret=do-not-expose", "FAILED"},
+		{"failed", "stage=web_login, reason=security_check, secret=do-not-expose", "VERIFICATION_REQUIRED"},
+		{"failed", "reason=additional_verification", "VERIFICATION_REQUIRED"}, {"succeeded", "", "REQUIRED"},
+	} {
+		t.Run(tc.status+tc.reason, func(t *testing.T) {
+			reauth, reader, repo, _, _ := newExcelReauthTestService(t)
+			account := reader.account
+			account.Status = StatusActive
+			account.Extra = map[string]any{"openai_excel_bps": true}
+			if tc.status != "" {
+				repo.task = &OpenAIOAuthReauthTaskRecord{OAuthProfile: "excel", Status: tc.status, Error: tc.workerError}
 			}
+			upstream := &httpUpstreamRecorder{}
+			gateway := openAIClientToolsTestService(upstream)
+			gateway.excelOAuthReauth = reauth
+			_, err := gateway.FetchOpenAIModelsList(context.Background(), account)
+			require.Equal(t, "OPENAI_EXCEL_AUTH_"+tc.reason, infraerrors.Reason(err))
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest("POST", "/test", nil)
+			svc := &AccountTestService{openaiGatewayService: gateway}
+			err = svc.testExcelBPSAccountConnection(c, account, "gpt-6-astra", "hi")
+			require.ErrorContains(t, err, "basispoints_auth_"+strings.ToLower(tc.reason))
+			require.ErrorContains(t, err, "Credential Operations")
+			require.NotContains(t, rec.Body.String(), "do-not-expose")
+			require.Nil(t, upstream.lastReq)
 		})
 	}
 }

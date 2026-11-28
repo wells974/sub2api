@@ -22,15 +22,14 @@ import (
 // transport. It has no periodic inspection, account recovery or plaintext
 // password enrollment.
 type OpenAIReloginService struct {
-	reauth     *OpenAIOAuthReauthService
 	settings   SettingRepository
 	httpClient *http.Client
 	loginMu    sync.Mutex
 	logins     map[string]*OpenAITwoFALoginJob
 }
 
-func NewOpenAIReloginService(settings SettingRepository, reauth *OpenAIOAuthReauthService) *OpenAIReloginService {
-	return &OpenAIReloginService{settings: settings, reauth: reauth, httpClient: &http.Client{}}
+func NewOpenAIReloginService(settings SettingRepository) *OpenAIReloginService {
+	return &OpenAIReloginService{settings: settings, httpClient: &http.Client{}}
 }
 func (s *OpenAIReloginService) Stop() { s.clearTwoFALogins() }
 

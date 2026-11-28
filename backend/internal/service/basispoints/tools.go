@@ -5,12 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -36,7 +33,6 @@ type replayEntry struct {
 	key             string
 	raw             []byte
 	callFingerprint string
-	clientSearch    bool
 	used            time.Time
 	weight          int
 }
@@ -80,18 +76,18 @@ func (c *ReplayCache) expireLocked(now time.Time) {
 	}
 }
 
-func (c *ReplayCache) putCall(scope, id string, item, clientCall object, clientSearch bool) {
+func (c *ReplayCache) put(scope, id string, item object, clientCall ...object) {
 	if c == nil || id == "" {
 		return
 	}
 	if c.store != nil {
-		c.persist(scope, id, item, clientCall, clientSearch)
+		c.persist(scope, id, item, clientCall)
 		return
 	}
 	raw, err := json.Marshal(item)
 	var signature string
-	if err == nil && len(raw) <= replayCacheEntryBytes && clientCall != nil {
-		signature = historyCallFingerprint(clientCall)
+	if err == nil && len(raw) <= replayCacheEntryBytes && len(clientCall) == 1 {
+		signature = historyCallFingerprint(clientCall[0])
 	}
 	key := scope + "\x00" + id
 	weight := len(raw) + len(key) + len(signature) + 128
@@ -110,7 +106,7 @@ func (c *ReplayCache) putCall(scope, id string, item, clientCall object, clientS
 	if err != nil || len(raw) > replayCacheEntryBytes || weight > replayCacheMaxBytes {
 		return
 	}
-	c.entries[key] = c.order.PushBack(replayEntry{key: key, raw: raw, callFingerprint: signature, clientSearch: clientSearch, used: now, weight: weight})
+	c.entries[key] = c.order.PushBack(replayEntry{key: key, raw: raw, callFingerprint: signature, used: now, weight: weight})
 	c.bytes += weight
 	for len(c.entries) > replayCacheMaxEntries || c.bytes > replayCacheMaxBytes {
 		c.removeLocked(c.order.Front())
@@ -118,8 +114,7 @@ func (c *ReplayCache) putCall(scope, id string, item, clientCall object, clientS
 }
 
 func (c *ReplayCache) get(scope, id string) object {
-	item, _ := c.getMatching(scope, id, "")
-	return item
+	return c.getMatching(scope, id, "", false)
 }
 
 // A complete client call is stronger evidence than a reused call ID. Matching
@@ -163,26 +158,20 @@ func historyCallFingerprint(item object) string {
 	return fingerprint(canonical)
 }
 
-// Full history can disambiguate an ordinary function named tool_search and
-// upgrade a replay entry written before native client searches were tagged.
-func (c *ReplayCache) getForCall(scope, id string, clientCall object, clientSearch bool) object {
+func (c *ReplayCache) getForCall(scope, id string, clientCall object) object {
 	signature := historyCallFingerprint(clientCall)
 	if signature == "" {
 		return nil
 	}
-	native, wasSearch := c.getMatching(scope, id, signature)
-	if native != nil && wasSearch != clientSearch {
-		c.putCall(scope, id, native, clientCall, clientSearch)
-	}
-	return native
+	return c.getMatching(scope, id, signature, true)
 }
 
-func (c *ReplayCache) getMatching(scope, id, signature string) (object, bool) {
+func (c *ReplayCache) getMatching(scope, id, signature string, requireSignature bool) object {
 	if c == nil {
-		return nil, false
+		return nil
 	}
 	if c.store != nil {
-		return c.restore(scope, id, signature)
+		return c.restore(scope, id, signature, requireSignature)
 	}
 	c.mu.Lock()
 	now := c.currentTime()
@@ -190,12 +179,12 @@ func (c *ReplayCache) getMatching(scope, id, signature string) (object, bool) {
 	entry := c.entries[scope+"\x00"+id]
 	if entry == nil {
 		c.mu.Unlock()
-		return nil, false
+		return nil
 	}
 	cached, ok := entry.Value.(replayEntry)
-	if !ok || (signature != "" && cached.callFingerprint != signature) {
+	if !ok || (requireSignature && cached.callFingerprint != signature) {
 		c.mu.Unlock()
-		return nil, false
+		return nil
 	}
 	cached.used = now
 	entry.Value = cached
@@ -205,9 +194,9 @@ func (c *ReplayCache) getMatching(scope, id, signature string) (object, bool) {
 	// outside the global cache lock, including after eviction/replacement.
 	var item object
 	if decode(cached.raw, &item) != nil {
-		return nil, false
+		return nil
 	}
-	return item, cached.clientSearch
+	return item
 }
 
 func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
@@ -245,9 +234,6 @@ func (b *Bridge) collectToolsAt(value any, namespace, path string, single bool) 
 			}
 			catalog = append(catalog, nested...)
 			continue
-		}
-		if clientToolSearch(item) && namespace == "" {
-			kind, name = "function", "tool_search"
 		}
 		if isUnsupportedHostedTool(kind) {
 			if b.unsupportedTools == nil {
@@ -340,10 +326,6 @@ func toolDefinitionFingerprint(item object) string {
 		}
 	}
 	return fingerprint(definition)
-}
-
-func clientToolSearch(item object) bool {
-	return item["type"] == "tool_search" && item["execution"] == "client"
 }
 
 // Hosted capabilities cannot be relayed as client function calls. Ignore known
@@ -448,7 +430,7 @@ func (b *Bridge) rebuildNativeHistoryCall(item object) (object, error) {
 	}, nil
 }
 
-func (b *Bridge) translateHistory(input []any, pairedSearch map[int]object) ([]any, error) {
+func (b *Bridge) translateHistory(input []any) ([]any, error) {
 	result := make([]any, 0, len(input))
 	seenCalls := make(map[string]bool)
 	var trigger any
@@ -459,20 +441,6 @@ func (b *Bridge) translateHistory(input []any, pairedSearch map[int]object) ([]a
 			return nil, fmt.Errorf("invalid Basispoints input item")
 		}
 		delete(item, "internal_chat_message_metadata_passthrough")
-		// Collect the revealed schemas through collectClientCatalog; send only a
-		// receipt through the history, so hidden definitions do not leak a second time.
-		id := text(item["call_id"])
-		clientSearch := item["type"] == "tool_search_call" && item["execution"] == "client"
-		if clientSearch {
-			item = maps.Clone(item)
-			apicompat.LowerClientToolSearchCall(item)
-		} else if _, paired := pairedSearch[index]; paired {
-			output := item["output"]
-			if output == nil {
-				output = "Tool search completed. Returned definitions are in the client tool catalog."
-			}
-			item = object{"type": "function_call_output", "call_id": id, "output": output}
-		}
 		switch text(item["type"]) {
 		case "additional_tools", "tool_search_output":
 			continue
@@ -488,7 +456,7 @@ func (b *Bridge) translateHistory(input []any, pairedSearch map[int]object) ([]a
 			continue
 		case "function_call", "custom_tool_call":
 			id := text(item["call_id"])
-			native := b.replay.getForCall(b.scope, id, item, clientSearch)
+			native := b.replay.getForCall(b.scope, id, item)
 			if err := b.replay.Err(); err != nil {
 				return nil, err
 			}
@@ -499,7 +467,7 @@ func (b *Bridge) translateHistory(input []any, pairedSearch map[int]object) ([]a
 				if err != nil {
 					return nil, err
 				}
-				b.replay.putCall(b.scope, id, native, item, clientSearch)
+				b.replay.put(b.scope, id, native, item)
 				if err := b.replay.Err(); err != nil {
 					return nil, err
 				}
@@ -518,10 +486,7 @@ func (b *Bridge) translateHistory(input []any, pairedSearch map[int]object) ([]a
 			}
 			id := text(item["call_id"])
 			if !seenCalls[id] {
-				native := pairedSearch[index]
-				if native == nil {
-					native = b.replay.get(b.scope, id)
-				}
+				native := b.replay.get(b.scope, id)
 				if err := b.replay.Err(); err != nil {
 					return nil, err
 				}
@@ -547,8 +512,7 @@ func (b *Bridge) translateHistory(input []any, pairedSearch map[int]object) ([]a
 			item["id"] = itemID
 			toolImages = separateToolImages(item)
 		case "configuration_update":
-			// Already validated and folded into the request-wide effort by Prepare.
-			continue
+			return nil, fmt.Errorf("basispoints does not support configuration_update; start a new request with the desired effort")
 		}
 		if err := b.validateHistoryContent(item["content"], index, "content"); err != nil {
 			return nil, err
@@ -576,9 +540,6 @@ func isTool(item object) bool {
 // translateCall accepts only the declared relay transport and a caller-declared tool.
 // It does not evaluate code or dispatch any Excel operation.
 func (b *Bridge) translateCall(native object) (object, error) {
-	if result, handled, err := b.translateCatalogLookup(native); handled {
-		return result, err
-	}
 	name := text(native["name"])
 	if text(native["type"]) == "function_call" && (name == "update_plan" || name == "functions.update_plan") {
 		return b.translateNativePlan(native)
@@ -701,9 +662,6 @@ func (b *Bridge) translateDirectCatalogCall(native object) (object, error) {
 // tool and its envelope. It performs no caching and executes nothing; callers decide
 // how the call replays upstream.
 func (b *Bridge) finishClientToolCall(native object, info tool, envelope object, marked, validateSchema bool) (object, error) {
-	if b.needsCatalogDisclosure(info) {
-		return b.catalogDisclosureCall(native, []string{catalogToolName(info)})
-	}
 	if marked && info.Kind != "custom" {
 		return nil, fmt.Errorf("basispoints raw transport requires a declared custom tool")
 	}
@@ -778,16 +736,12 @@ type replayWrite struct {
 	native, client object
 }
 
-func (b *Bridge) isClientSearchCall(call object) bool {
-	return call["type"] == "function_call" && call["name"] == "tool_search" && call["namespace"] == nil && clientToolSearch(b.tools["tool_search"].Catalog)
-}
-
 func (b *Bridge) rememberReplay(id string, native, client object) error {
 	if b.stagedReplays != nil {
 		*b.stagedReplays = append(*b.stagedReplays, replayWrite{id, native, client})
 		return nil
 	}
-	b.replay.putCall(b.scope, id, native, client, b.isClientSearchCall(client))
+	b.replay.put(b.scope, id, native, client)
 	return b.replay.Err()
 }
 
@@ -823,18 +777,13 @@ func (b *Bridge) translateResponse(response object) error {
 			if err != nil {
 				return err
 			}
-			if b.isClientSearchCall(call) {
-				call = maps.Clone(call) // Keep the function-call identity staged for replay.
-				apicompat.RestoreClientToolSearchCall(call)
-				delete(call, "encrypted_function_args")
-			}
 			translated[i] = call
 		} else {
 			translated[i] = raw
 		}
 	}
 	for _, write := range writes {
-		b.replay.putCall(b.scope, write.id, write.native, write.client, b.isClientSearchCall(write.client))
+		b.replay.put(b.scope, write.id, write.native, write.client)
 		if err := b.replay.Err(); err != nil {
 			return err
 		}

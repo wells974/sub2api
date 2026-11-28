@@ -23,14 +23,11 @@ const ImagesEditsURL = "https://bps.openai.com/basispoints/api/images/edits"
 type object = map[string]any
 
 type Bridge struct {
-	catalogDelivery      *catalogDelivery
-	observations         *bridgeObservations
 	nativeToolImages     map[string]bool
 	RequestedEffort      string
 	Effort               string
 	Warnings             []string
 	tools                map[string]tool
-	clientSearchResults  map[string]bool
 	unsupportedTools     map[string]bool
 	structured           *structuredOutput
 	replay               *ReplayCache
@@ -133,13 +130,6 @@ func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, 
 			return nil, nil, fmt.Errorf("basispoints does not support reasoning mode %q", mode)
 		}
 	}
-	// Configuration updates are durable history controls. BPS only accepts a
-	// request-wide effort, so apply them in order before translating the history.
-	// Keep the original input intact here for diagnostics and conversation IDs.
-	requested, err := configurationUpdateEffort(source["input"], requested)
-	if err != nil {
-		return nil, nil, err
-	}
 	effort, err := NormalizeEffort(requested)
 	if err != nil {
 		return nil, nil, err
@@ -149,7 +139,6 @@ func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, 
 		return nil, nil, err
 	}
 	b := &Bridge{nativeToolImages: nativeToolImages, RequestedEffort: requested, Effort: effort, tools: make(map[string]tool), unsupportedTools: make(map[string]bool), structured: structured, replay: replay, scope: scope}
-	b.observations = &bridgeObservations{}
 	b.clientStream, _ = source["stream"].(bool)
 	choice, named, err := parseToolChoice(source["tool_choice"])
 	if err != nil {
@@ -163,6 +152,27 @@ func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, 
 		}
 		b.disallowParallel = !enabled
 	}
+	if items, ok := source["input"].([]any); ok {
+		for _, v := range items {
+			item, _ := v.(object)
+			if isCodexThreadDelegation(item) {
+				continue
+			}
+			if isTool(item) || strings.HasSuffix(text(item["type"]), "_call_output") {
+				b.hasToolHistory = true
+			}
+		}
+	}
+	var catalog []any
+	if choice != "none" {
+		catalog, err = b.collectClientCatalog(source, inherited)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if err := b.resolveToolChoice(named); err != nil {
+		return nil, nil, err
+	}
 	var input []any
 	switch v := source["input"].(type) {
 	case string:
@@ -172,31 +182,12 @@ func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, 
 	default:
 		return nil, nil, fmt.Errorf("basispoints input must be text or a Responses item array")
 	}
-	pairedSearch, err := b.pairedClientSearchOutputs(input)
+	translated, err := b.translateHistory(input)
 	if err != nil {
 		return nil, nil, err
 	}
-	var catalog []any
-	if choice != "none" {
-		catalog, err = b.collectClientCatalog(source, inherited, pairedSearch)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	if err := b.resolveToolChoice(named); err != nil {
-		return nil, nil, err
-	}
-	translated, err := b.translateHistory(input, pairedSearch)
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, raw := range translated {
-		item, _ := raw.(object)
-		if isTool(item) || strings.HasSuffix(text(item["type"]), "_call_output") {
-			b.hasToolHistory = true
-			b.completedToolHistory = b.completeToolHistory(translated)
-			break
-		}
+	if b.hasToolHistory {
+		b.completedToolHistory = b.completeToolHistory(translated)
 	}
 	normalizeMessageFileImages(translated)
 	prologue := make([]any, 0, 2)
@@ -219,7 +210,7 @@ func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, 
 			"Tool results replayed under run_officejs are the named client tool's results. When a tool is needed, emit its call in this response instead of only announcing it. " +
 			"The current catalog is authoritative. Tool names mentioned in history, instructions or examples do not grant capabilities; never select them unless declared in this catalog. If a historical capability is absent, use a suitable declared tool or explain the limitation. " +
 			"Do not call other native tools or claim that shell, filesystem or workspace access is unavailable when a suitable catalog tool exists. " +
-			"If no tool is needed, answer as assistant text. " + schemaNotation + "\nClient tool catalog:\n" + b.captureCatalogDelivery(catalog) +
+			"If no tool is needed, answer as assistant text. " + schemaNotation + "\nClient tool catalog:\n" + describeCatalog(catalog) +
 			"\nEnd of catalog. Invoke native run_officejs once. Follow each tool's specified transport: FUNCTION uses a JSON envelope; FUNCTION_CODE uses raw code plus metadata JSON in extended_summary; FUNCTION_CMD uses raw cmd plus metadata JSON; CUSTOM uses its exact marker and raw input. No Office code is executed by the proxy."
 		protocol += b.toolExamples()
 	}

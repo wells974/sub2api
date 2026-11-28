@@ -374,32 +374,3 @@ func TestIPAuditRecoveryOperatorAuditsWithoutRequestBody(t *testing.T) {
 	require.Equal(t, "operator_review", repository.logs[0].Extra["reason_code"])
 	require.Equal(t, "released", repository.logs[0].Extra["result"])
 }
-
-func TestExcelInitialLoginAuditOmitsCredentials(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	repository := &auditCaptureRepository{}
-	auditService := service.NewAuditLogService(repository, nil)
-	auditService.Start()
-	router := gin.New()
-	router.Use(func(c *gin.Context) {
-		c.Set(string(ContextKeyUser), AuthSubject{UserID: 77})
-		c.Set(string(ContextKeyUserRole), "admin")
-		c.Next()
-	})
-	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(auditService)))
-	for _, path := range []string{"/api/v1/admin/account-ops/initial-excel-login", "/api/v1/admin/account-ops/relogin/initial-excel-login"} {
-		router.POST(path, func(c *gin.Context) { c.JSON(http.StatusAccepted, gin.H{"ok": true}) })
-		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"email":"private@example.com","password":"PRIVATE_PASSWORD","mfa_secret":"PRIVATE_TOTP"}`))
-		request.Header.Set("Content-Type", "application/json")
-		recorder := httptest.NewRecorder()
-		router.ServeHTTP(recorder, request)
-		require.Equal(t, http.StatusAccepted, recorder.Code)
-	}
-	auditService.Stop()
-	repository.mu.Lock()
-	defer repository.mu.Unlock()
-	require.Len(t, repository.logs, 2)
-	for _, log := range repository.logs {
-		require.Equal(t, "<credential-bearing body omitted>", log.RequestBody)
-	}
-}

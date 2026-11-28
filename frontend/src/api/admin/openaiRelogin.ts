@@ -39,8 +39,6 @@ export function parseTwoFALoginText(raw: string): OpenAIReloginCredentials[] {
 export interface TwoFALoginJob {
   id: string
   status: 'running' | 'succeeded' | 'failed'
-  error_code?: string
-  error_stage?: string
   credential?: Record<string, unknown>
 }
 
@@ -56,16 +54,4 @@ export async function getTwoFALogin(id: string, options?: { signal?: AbortSignal
 
 export async function deleteTwoFALogin(id: string): Promise<void> {
   await apiClient.delete(`${twoFALoginPath}/${id}`)
-}
-
-// BPS initial login uses the built-in Excel worker, independently of Session Studio.
-const excelInitialPath = '/admin/account-ops/relogin/initial-excel-login'
-export async function startExcelTwoFALogin(entry: OpenAIReloginCredentials, proxyId?: number | null): Promise<TwoFALoginJob> {
-  return (await apiClient.post(excelInitialPath, { ...entry, proxy_id: proxyId ?? null })).data
-}
-export async function getExcelTwoFALogin(id: string, options?: { signal?: AbortSignal }): Promise<TwoFALoginJob> {
-  return (await apiClient.get(`${excelInitialPath}/${id}`, options)).data
-}
-export async function deleteExcelTwoFALogin(id: string): Promise<void> {
-  await apiClient.delete(`${excelInitialPath}/${id}`)
 }

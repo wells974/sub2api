@@ -61,9 +61,6 @@ func (h *ImageHistory) Progress() ImageProgress {
 // ImageCheckpoint authenticates a compact window echoed by the client without
 // persisting the window, images, or conversation contents.
 type ImageCheckpoint struct {
-	MessageImages []MessageImagePosition `json:",omitempty"`
-
-	Trim   []ImageTrimPosition `json:",omitempty"`
 	Prefix ImageProgress
 	Split  int
 	Window ImageProgress
@@ -81,14 +78,6 @@ func (h *ImageHistory) Checkpoint(split int, window []any) (ImageCheckpoint, err
 func (h *ImageHistory) Reconcile(checkpoints []ImageCheckpoint) (bool, error) {
 	changed := false
 	for _, cp := range checkpoints {
-		if len(cp.Trim) > 0 {
-			applied, err := h.reconcileTrim(cp)
-			if err != nil {
-				return false, err
-			}
-			changed = changed || applied
-			continue
-		}
 		n := cp.Prefix.Count
 		w := cp.Window.Count
 		if n <= 0 || cp.Split <= 0 || cp.Split >= n || w <= 0 {
@@ -181,23 +170,6 @@ func (h *ImageHistory) WithInput(input []any, compact bool) ([]byte, error) {
 	source := make(object, len(h.source))
 	for k, v := range h.source {
 		source[k] = v
-	}
-	// The compacted prefix may contain the last durable effort control. Fold
-	// the original history into the request before replacing it, including when
-	// replaying a checkpoint on a later turn. Retained newer controls still win.
-	effort, err := configurationUpdateEffort(h.source["input"], "")
-	if err != nil {
-		return nil, err
-	}
-	if effort != "" {
-		reasoning := object{}
-		if original, ok := source["reasoning"].(object); ok {
-			for key, value := range original {
-				reasoning[key] = value
-			}
-		}
-		reasoning["effort"] = effort
-		source["reasoning"] = reasoning
 	}
 	source["input"] = input
 	if compact {

@@ -40,7 +40,6 @@ func (c *issue871RepairRaceContext) Value(key any) any {
 }
 
 func TestExcelBPSSearchRepairOwnershipRaceThroughForward(t *testing.T) {
-	t.Setenv("SUB2API_BPS_ERROR_PRESENTATION", "legacy") // Verify protocol details; neutral is tested separately.
 	for _, repair := range []string{"transport", "unknown_target"} {
 		for _, outcome := range []string{"success", "failed"} {
 			for _, mode := range []string{"json", "sse", "compact_keepalive"} {

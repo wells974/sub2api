@@ -1,6 +1,11 @@
 export default {
   "accountUsageAttribution": "Channels use current account assignments. Reassigning an account moves its subtotal for the selected window to the new channel.",
-  "accountUsageFormula": "User charges and account charges come from account usage statistics. Gross profit is user charges less account charges. Margin uses the totals.",
+  "accountUsageFormula": "Matched settlements take precedence. New requests use saved request-time costs. Historical requests can use current procurement settings. Account charges that already include discounts keep that rate. Profit and margin cover priced requests only.",
+  "imagePurchasePrices": "Image purchase price per output image (optional, by size)",
+  "pricedRequests": "Cost covered for {known} / {total} requests",
+  "costEvidence": "Settled cost {settled} · Estimated cost {estimated} · Income with unknown cost {unknown} · {current} requests at current prices",
+  "profitCost": "Cost",
+  "accountProcurementSource": "Includes account purchase multiplier",
   "accountUsageCost": "Account charge",
   "accountUsageIncome": "User charge",
   "accountUsageBuilding": "Account statistics for this window are being updated. Refresh shortly.",
